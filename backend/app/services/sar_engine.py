@@ -3,8 +3,11 @@ import hashlib
 import json
 import logging
 import math
+import os
 import random
 from typing import Any, Dict, List, Optional, Tuple, Union
+from dotenv import load_dotenv
+load_dotenv()
 import numpy as np
 from shapely.geometry import Polygon, MultiPolygon, box, mapping, shape
 from shapely.affinity import rotate, scale, translate
@@ -41,9 +44,13 @@ class SAREngine:
             logger.info("Google Earth Engine library not available. Running in standalone SAR GeoEngine mode.")
             return
         try:
-            ee.Initialize()
+            ee_project = os.getenv("EE_PROJECT_ID")
+            if ee_project:
+                ee.Initialize(project=ee_project)
+            else:
+                ee.Initialize()
             self.ee_initialized = True
-            logger.info("Google Earth Engine successfully initialized.")
+            logger.info(f"Google Earth Engine successfully initialized (Project: {ee_project or 'default'}).")
         except Exception as e:
             logger.warning(f"Google Earth Engine not authenticated ({e}). Utilizing High-Fidelity SAR GeoEngine.")
             self.ee_initialized = False

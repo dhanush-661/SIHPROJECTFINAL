@@ -13,7 +13,10 @@ import datetime
 import hashlib
 import logging
 import math
+import os
 from typing import Any, Dict, List, Optional, Tuple
+from dotenv import load_dotenv
+load_dotenv()
 
 import numpy as np
 from shapely.geometry import mapping, shape
@@ -88,9 +91,13 @@ class SARThicknessService:
         if not EE_AVAILABLE:
             return
         try:
-            ee.Initialize()
+            ee_project = os.getenv("EE_PROJECT_ID")
+            if ee_project:
+                ee.Initialize(project=ee_project)
+            else:
+                ee.Initialize()
             self._ee_initialized = True
-            logger.info("SAR Thickness Service: GEE initialized (live sigma-0 extraction available).")
+            logger.info(f"SAR Thickness Service: GEE initialized (Project: {ee_project or 'default'}).")
         except Exception as exc:
             logger.info(f"SAR Thickness Service: GEE not authenticated ({exc}). Using high-fidelity simulator.")
 

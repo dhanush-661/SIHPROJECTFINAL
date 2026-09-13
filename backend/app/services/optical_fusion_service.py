@@ -3,7 +3,10 @@ import datetime
 import hashlib
 import logging
 import math
+import os
 from typing import Any, Dict, List, Optional, Tuple, Union
+from dotenv import load_dotenv
+load_dotenv()
 import numpy as np
 from shapely.geometry import shape, Polygon, MultiPolygon, Point
 from shapely.ops import transform
@@ -96,9 +99,13 @@ class OpticalFusionService:
         if not EE_AVAILABLE:
             return
         try:
-            ee.Initialize()
+            ee_project = os.getenv("EE_PROJECT_ID")
+            if ee_project:
+                ee.Initialize(project=ee_project)
+            else:
+                ee.Initialize()
             self.ee_initialized = True
-            logger.info("Optical Fusion Service: Google Earth Engine initialized.")
+            logger.info(f"Optical Fusion Service: Google Earth Engine initialized (Project: {ee_project or 'default'}).")
         except Exception as e:
             logger.warning(f"Optical Fusion Service: GEE initialization note: {e}")
             self.ee_initialized = False

@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, stat
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+load_dotenv()
 
 from app.schemas.drift import (
     DriftSimulationRequest,
@@ -336,9 +337,12 @@ def get_vessel_correlation(spill_id: str) -> VesselCorrelationResponse:
     # Check DB
     persisted = db_service.get_vessel_correlation(spill_id)
     if persisted:
-        res = VesselCorrelationResponse(**persisted)
-        _vessels_cache[spill_id] = res
-        return res
+        try:
+            res = VesselCorrelationResponse(**persisted)
+            _vessels_cache[spill_id] = res
+            return res
+        except Exception:
+            pass
 
     return correlate_vessels_for_spill(spill_id, VesselCorrelationRequest())
 

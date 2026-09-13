@@ -41,10 +41,17 @@ class CopernicusCDSService:
 
     async def verify_connection(self) -> bool:
         """Pings Copernicus CDS API root endpoint to confirm authentication and connectivity."""
+        if not self.key:
+            return False
         try:
+            headers = {
+                "PRIVATE-TOKEN": self.key,
+                "Authorization": f"Bearer {self.key}",
+                "User-Agent": "AquaSentinel-CDS/4.0"
+            }
             async with httpx.AsyncClient(timeout=8.0, verify=False) as client:
-                resp = await client.get(self.url, auth=(self.key, ""))
-                if resp.status_code == 200:
+                resp = await client.get(self.url, headers=headers)
+                if resp.status_code in (200, 202):
                     self._is_verified = True
                     return True
                 logger.warning(f"Copernicus CDS responded with status {resp.status_code}")

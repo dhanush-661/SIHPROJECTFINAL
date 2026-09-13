@@ -1,0 +1,216 @@
+@import "leaflet/dist/leaflet.css";
+
+:root {
+  /* Surface & Background Palettes (Clinical Light Theme) */
+  --bg-canvas: #F7F8FA;
+  --bg-surface: #FFFFFF;
+  --bg-subtle: #F1F4F8;
+  --bg-muted: #E9ECEF;
+  
+  /* Borders & Dividers */
+  --border-subtle: #E3E6EA;
+  --border-strong: #CBD5E1;
+  --border-focus: #0B4F6C;
+  
+  /* Primary Maritime Brand Accents */
+  --navy-primary: #0B4F6C;
+  --navy-hover: #083C52;
+  --navy-active: #052938;
+  --navy-subtle: #EBF3F7;
+  --navy-border: rgba(11, 79, 108, 0.25);
+  
+  /* Provenance Color Hierarchy */
+  --prov-detected: #2563EB;        /* Blue */
+  --prov-detected-bg: #EFF6FF;
+  --prov-detected-border: #BFDBFE;
+  
+  --prov-measured: #0D9488;        /* Teal / Cyan */
+  --prov-measured-bg: #F0FDFA;
+  --prov-measured-border: #99F6E4;
+  
+  --prov-predicted: #D97706;       /* Amber / Orange */
+  --prov-predicted-bg: #FFFBEB;
+  --prov-predicted-border: #FDE68A;
+  
+  --prov-anomaly: #DC2626;         /* Red */
+  --prov-anomaly-bg: #FEF2F2;
+  --prov-anomaly-border: #FECACA;
+  
+  --prov-verified: #16A34A;        /* Green */
+  --prov-verified-bg: #F0FDF4;
+  --prov-verified-border: #BBF7D0;
+  
+  /* Typography Colors */
+  --text-primary: #1A1D21;
+  --text-secondary: #64748B;
+  --text-muted: #94A3B8;
+  --text-inverse: #FFFFFF;
+  
+  /* Fonts */
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', 'Fira Code', ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Card Surface Styling */
+.clinical-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.clinical-card:hover {
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+}
+
+.mono-text {
+  font-family: var(--font-mono);
+  letter-spacing: -0.01em;
+}
+
+/* Provenance Badges */
+.badge-provenance {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+  line-height: 1.2;
+}
+
+.badge-detected {
+  background-color: var(--prov-detected-bg);
+  color: var(--prov-detected);
+  border: 1px solid var(--prov-detected-border);
+}
+
+.badge-measured {
+  background-color: var(--prov-measured-bg);
+  color: var(--prov-measured);
+  border: 1px solid var(--prov-measured-border);
+}
+
+.badge-predicted {
+  background-color: var(--prov-predicted-bg);
+  color: var(--prov-predicted);
+  border: 1px solid var(--prov-predicted-border);
+}
+
+.badge-anomaly {
+  background-color: var(--prov-anomaly-bg);
+  color: var(--prov-anomaly);
+  border: 1px solid var(--prov-anomaly-border);
+}
+
+.badge-verified {
+  background-color: var(--prov-verified-bg);
+  color: var(--prov-verified);
+  border: 1px solid var(--prov-verified-border);
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #F1F4F8;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+/* Leaflet Overrides for Clinical Light Theme */
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  background: #070F1E !important;
+  font-family: var(--font-sans) !important;
+}
+
+.leaflet-control-zoom {
+  border: 1px solid var(--border-subtle) !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1) !important;
+  border-radius: 6px !important;
+  overflow: hidden;
+  margin-right: 14px !important;
+  margin-bottom: 14px !important;
+}
+
+.leaflet-control-zoom a {
+  background-color: #FFFFFF !important;
+  color: var(--navy-primary) !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+  width: 30px !important;
+  height: 30px !important;
+  line-height: 30px !important;
+  font-size: 14px !important;
+  font-weight: 700 !important;
+}
+
+.leaflet-control-zoom a:hover {
+  background-color: var(--navy-subtle) !important;
+  color: var(--navy-hover) !important;
+}
+
+.leaflet-popup-content-wrapper {
+  background: #FFFFFF !important;
+  border: 1px solid var(--border-subtle) !important;
+  color: var(--text-primary) !important;
+  border-radius: 6px !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1) !important;
+  padding: 4px;
+}
+
+.leaflet-popup-tip {
+  background: #FFFFFF !important;
+  border: 1px solid var(--border-subtle) !important;
+}
+
+/* Pulse animation for live data */
+@keyframes pulse-dot {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 6px rgba(22, 163, 74, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(22, 163, 74, 0);
+  }
+}
+
+.pulse-live-indicator {
+  animation: pulse-dot 1.8s infinite;
+}

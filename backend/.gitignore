@@ -1,0 +1,35 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Environment & Credentials
+.env
+.env.*
+!.env.example
+.cdsapirc
+*.key
+*.pem
+
+# Database
+*.sqlite
+*.sqlite3
+*.db
+spills_database.sqlite3
+
+# Generated Forensic PDF Reports
+reports/*.pdf
+*.pdf
+
+# Virtual Environments
+.venv/
+venv/
+env/
+
+# Pytest / Coverage
+.pytest_cache/
+.coverage
+htmlcov/

@@ -2,7 +2,9 @@ import logging
 import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
+import shapely
 from shapely.geometry import Point, Polygon, MultiPolygon, shape
+from shapely.prepared import prep
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +20,9 @@ except ImportError:
 DEFAULT_MAX_LAND_FRACTION = float(os.getenv("LAND_MASK_MAX_FRACTION", "0.30"))
 DEFAULT_MIN_WIND_SPEED_MS = float(os.getenv("MIN_WIND_SPEED_MS", "2.0"))
 DEFAULT_MAX_WIND_SPEED_MS = float(os.getenv("MAX_WIND_SPEED_MS", "14.0"))
+
+# Fast detection for Shapely C-vectorized contains_xy
+HAS_CONTAINS_XY = hasattr(shapely, "contains_xy")
 
 
 class FalsePositiveFilter:
@@ -57,7 +62,7 @@ class FalsePositiveFilter:
     ) -> List[Tuple[float, float]]:
         """
         Samples a representative set of (latitude, longitude) coordinate points
-        across a polygon's centroid, boundary, and interior.
+        across a polygon's centroid, boundary, and interior with C-vectorized containment.
         """
         shapely_geom = shape(geom) if isinstance(geom, dict) else geom
         if shapely_geom.is_empty:
@@ -67,10 +72,12 @@ class FalsePositiveFilter:
 
         # 1. Centroid (lat, lon)
         centroid = shapely_geom.centroid
-        points.append((centroid.y, centroid.x))
+        points.append((float(centroid.y), float(centroid.x)))
 
         # Handle Polygons and MultiPolygons
         polys = [shapely_geom] if isinstance(shapely_geom, Polygon) else list(shapely_geom.geoms)
+
+        grid_n = int(np.ceil(np.sqrt(num_interior_samples)))
 
         for poly in polys:
             if poly.is_empty:
@@ -79,21 +86,33 @@ class FalsePositiveFilter:
             # 2. Boundary perimeter samples
             ext = poly.exterior
             if ext and ext.length > 0:
-                for frac in np.linspace(0.0, 1.0, num_boundary_samples, endpoint=False):
+                fractions = np.linspace(0.0, 1.0, num_boundary_samples, endpoint=False)
+                for frac in fractions:
                     pt = ext.interpolate(frac, normalized=True)
-                    points.append((pt.y, pt.x))
+                    points.append((float(pt.y), float(pt.x)))
 
             # 3. Interior samples (regular grid within bounding box clipped to polygon)
             minx, miny, maxx, maxy = poly.bounds
-            grid_n = int(np.ceil(np.sqrt(num_interior_samples)))
             if maxx > minx and maxy > miny:
                 x_steps = np.linspace(minx, maxx, grid_n + 2)[1:-1]
                 y_steps = np.linspace(miny, maxy, grid_n + 2)[1:-1]
-                for gx in x_steps:
-                    for gy in y_steps:
-                        pt_obj = Point(gx, gy)
-                        if poly.contains(pt_obj):
-                            points.append((gy, gx))
+                gx_grid, gy_grid = np.meshgrid(x_steps, y_steps)
+                gx_flat = gx_grid.ravel()
+                gy_flat = gy_grid.ravel()
+
+                if HAS_CONTAINS_XY:
+                    # High-speed vectorized C-level containment without Point object allocation
+                    mask = shapely.contains_xy(poly, gx_flat, gy_flat)
+                    interior_lats = gy_flat[mask]
+                    interior_lons = gx_flat[mask]
+                    for ilat, ilon in zip(interior_lats, interior_lons):
+                        points.append((float(ilat), float(ilon)))
+                else:
+                    # Fallback to prepared geometry
+                    prep_poly = prep(poly)
+                    for gx, gy in zip(gx_flat, gy_flat):
+                        if prep_poly.contains(Point(gx, gy)):
+                            points.append((float(gy), float(gx)))
 
         return points
 
@@ -103,7 +122,7 @@ class FalsePositiveFilter:
         max_land_fraction: Optional[float] = None
     ) -> Tuple[bool, float, int, str]:
         """
-        Fast offline land-sea check using GSHHG coastline dataset.
+        Fast offline land-sea check using GSHHG coastline dataset with vectorized batch queries.
         Returns:
             (is_land, land_fraction, total_samples, reason)
         """
@@ -115,15 +134,17 @@ class FalsePositiveFilter:
         if not sampled_points:
             return False, 0.0, 0, "No geometry points to evaluate."
 
-        centroid_lat, centroid_lon = sampled_points[0]
-        centroid_is_land = bool(globe.is_land(centroid_lat, centroid_lon))
-
-        land_count = 0
-        for lat, lon in sampled_points:
-            if globe.is_land(lat, lon):
-                land_count += 1
-
         total_samples = len(sampled_points)
+        pts_arr = np.asarray(sampled_points, dtype=np.float64)
+        lats = pts_arr[:, 0]
+        lons = pts_arr[:, 1]
+
+        # Vectorized lookup across all sampled points in a single C call
+        land_mask = np.asarray(globe.is_land(lats, lons), dtype=bool)
+
+        centroid_lat, centroid_lon = float(lats[0]), float(lons[0])
+        centroid_is_land = bool(land_mask[0])
+        land_count = int(np.count_nonzero(land_mask))
         land_fraction = land_count / total_samples if total_samples > 0 else 0.0
 
         is_land_rejected = centroid_is_land or (land_fraction > threshold)
@@ -222,3 +243,4 @@ class FalsePositiveFilter:
         reason = "Passed all false-positive environmental filters." if is_valid else "; ".join(filter_details["rejection_reasons"])
 
         return is_valid, reason, filter_details
+

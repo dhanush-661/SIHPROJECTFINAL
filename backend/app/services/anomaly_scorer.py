@@ -40,17 +40,48 @@ class AnomalyAttributionScorer:
         """
         now_utc = datetime.datetime.now(datetime.timezone.utc)
         
+        strict_mode = bool(request.strict_real_ais_only)
+
         # 1. Query AIS vessels in corridor
+        fetch_gfw = request.fetch_online_gfw if request.fetch_online_gfw is not None else (not strict_mode)
         vessels_raw, criteria, total_corridor = ais_engine.query_vessels_in_corridor(
             origin_centroid=origin_centroid,
             origin_window=origin_window,
             slick_orientation_deg=slick_orientation_deg,
             padding_hours=request.time_window_padding_hours or 12.0,
-            buffer_km=request.origin_buffer_km or 25.0
+            buffer_km=request.origin_buffer_km or 25.0,
+            spill_id=spill_id,
+            strict_real_ais_only=strict_mode,
+            fetch_online_gfw=fetch_gfw
         )
 
         t_likely_str = origin_window.get("most_likely", "2026-09-06T20:00:00Z")
         t_likely = datetime.datetime.fromisoformat(t_likely_str.replace("Z", "+00:00"))
+
+        gfw_count = sum(1 for v in vessels_raw if v.get("data_source") == "GFW_CLOUD_GATEWAY")
+
+        # If zero vessels in corridor under strict mode, return clean zero response
+        if not vessels_raw:
+            return VesselCorrelationResponse(
+                spill_id=spill_id,
+                analyzed_at=now_utc.isoformat(),
+                provenance="MEASURED_HISTORICAL_ZERO",
+                disclaimer="Strict Authentic AIS mode enabled. Zero AIS transponders were recorded in this spatial-temporal search corridor.",
+                search_criteria=criteria,
+                total_vessels_in_corridor=0,
+                candidate_vessels_count=0,
+                authentic_vessels_count=0,
+                is_strict_mode=True,
+                gfw_cloud_synced=bool(gfw_count > 0 or fetch_gfw),
+                gfw_vessels_fetched=gfw_count,
+                candidate_vessels=[],
+                scoring_weights={
+                    "proximity": request.weight_proximity or 0.35,
+                    "temporal": request.weight_temporal or 0.25,
+                    "trajectory": request.weight_trajectory or 0.20,
+                    "ml_anomaly": request.weight_anomaly or 0.20
+                }
+            )
 
         # 2. Extract features for all vessels
         extracted_data = []
@@ -78,27 +109,31 @@ class AnomalyAttributionScorer:
             feature_matrix.append(feat_vec)
             extracted_data.append((v_dict, features, cpa_time))
 
-        # 3. Fit scikit-learn IsolationForest for ML Anomaly Scoring
-        X = np.array(feature_matrix, dtype=np.float64)
+        # 3. Fit and Predict via IsolationForest Machine Learning Model
+        X = np.array(feature_matrix)
+        
+        # Guard against zero variance or empty matrices
         if len(X) >= 3:
-            # IsolationForest anomaly detection
-            iso_forest = IsolationForest(
+            contamination = min(max(1.0 / len(X), 0.1), 0.35)
+            clf = IsolationForest(
                 n_estimators=100,
-                contamination=0.25,
+                contamination=contamination,
                 random_state=42
             )
-            iso_forest.fit(X)
-            # Decision function (lower = more anomalous), convert to [0.0, 1.0] anomaly score
-            raw_scores = -iso_forest.decision_function(X) # higher = more anomalous
-            min_s, max_s = np.min(raw_scores), np.max(raw_scores)
-            if max_s > min_s:
-                norm_anomaly_scores = (raw_scores - min_s) / (max_s - min_s)
+            clf.fit(X)
+            # decision_function: lower means more anomalous
+            raw_scores = -clf.decision_function(X)
+            # Normalize anomaly scores to [0.0, 1.0]
+            s_min, s_max = float(raw_scores.min()), float(raw_scores.max())
+            if s_max > s_min:
+                norm_anomaly = (raw_scores - s_min) / (s_max - s_min)
             else:
-                norm_anomaly_scores = np.ones(len(raw_scores)) * 0.5
+                norm_anomaly = np.full(len(X), 0.5)
         else:
-            norm_anomaly_scores = np.ones(len(X)) * 0.5
+            # Heuristic anomaly fallback for small clusters
+            norm_anomaly = [0.65 if d[1].ais_gap_duration_hours > 1.0 or d[1].loitering_score > 0.6 else 0.25 for d in extracted_data]
 
-        # 4. Compute Component Scores & Composite Suspect Score
+        # 4. Compute Weighted Composite Suspect Scores
         w_prox = request.weight_proximity or 0.35
         w_temp = request.weight_temporal or 0.25
         w_traj = request.weight_trajectory or 0.20
@@ -108,31 +143,13 @@ class AnomalyAttributionScorer:
         candidates: List[CandidateVessel] = []
 
         for idx, (v_dict, features, cpa_time) in enumerate(extracted_data):
-            ml_anomaly = float(norm_anomaly_scores[idx])
-
-            # Proximity Score: Exponential decay from origin
-            proximity_score = float(math.exp(-features.min_distance_to_origin_km / 7.5))
+            ml_anomaly = float(norm_anomaly[idx])
             
-            # Temporal Score: Gaussian proximity to most likely release time
-            cpa_dt = datetime.datetime.fromisoformat(cpa_time.replace("Z", "+00:00"))
-            time_diff_hours = abs((cpa_dt - t_likely).total_seconds()) / 3600.0
-            temporal_score = float(math.exp(-time_diff_hours / 5.0))
-
-            # Trajectory Score: Combination of loitering, speed variance, route deviation & AIS gap
-            gap_penalty = min(features.ais_gap_duration_hours / 2.0, 1.0) * 0.40
-            traj_score = float(min(
-                0.30 * features.loitering_score +
-                0.20 * features.route_deviation_score +
-                0.10 * min(features.speed_change_variance / 4.0, 1.0) +
-                gap_penalty,
-                1.0
-            ))
-
             comp_scores = ComponentScores(
-                proximity_score=round(min(max(proximity_score, 0.0), 1.0), 2),
-                temporal_score=round(min(max(temporal_score, 0.0), 1.0), 2),
-                trajectory_score=round(min(max(traj_score, 0.0), 1.0), 2),
-                ml_anomaly_score=round(min(max(ml_anomaly, 0.0), 1.0), 2)
+                proximity_score=round(float(features.min_distance_to_origin_km <= 15.0 and max(0.0, 1.0 - (features.min_distance_to_origin_km / 15.0))), 2),
+                temporal_score=round(float(min(max(features.time_near_origin_hours / 4.0, 0.0), 1.0)), 2),
+                trajectory_score=round(float(0.4 * features.loitering_score + 0.3 * features.route_deviation_score + 0.3 * min(features.ais_gap_duration_hours / 3.0, 1.0)), 2),
+                ml_anomaly_score=round(ml_anomaly, 2)
             )
 
             # Composite weighted suspect score
@@ -160,21 +177,30 @@ class AnomalyAttributionScorer:
                 features=features,
                 track=v_dict["track"],
                 closest_approach_time=cpa_time,
-                is_ais_dark_suspect=is_ais_dark
+                is_ais_dark_suspect=is_ais_dark,
+                is_authentic_real=v_dict.get("is_authentic_real", False),
+                data_source=v_dict.get("data_source", "CORRIDOR_BENCHMARK")
             )
             candidates.append(cand)
 
         # 5. Rank Candidate Vessels in descending order of suspect_score
         candidates.sort(key=lambda x: x.suspect_score, reverse=True)
 
+        authentic_count = sum(1 for c in candidates if c.is_authentic_real)
+        provenance_tag = "MEASURED_HISTORICAL_AIS" if authentic_count > 0 else "ANOMALY-FLAGGED"
+
         return VesselCorrelationResponse(
             spill_id=spill_id,
             analyzed_at=now_utc.isoformat(),
-            provenance="ANOMALY-FLAGGED",
+            provenance=provenance_tag,
             disclaimer="This analysis provides probabilistic spatiotemporal and kinematic correlation for maritime enforcement investigation. It does not constitute legal proof of culpability.",
             search_criteria=criteria,
             total_vessels_in_corridor=total_corridor,
             candidate_vessels_count=len(candidates),
+            authentic_vessels_count=authentic_count,
+            is_strict_mode=strict_mode,
+            gfw_cloud_synced=bool(gfw_count > 0 or fetch_gfw),
+            gfw_vessels_fetched=gfw_count,
             candidate_vessels=candidates,
             scoring_weights={
                 "proximity": w_prox,

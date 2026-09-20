@@ -148,6 +148,27 @@ body {
   background: #94A3B8;
 }
 
+.vessel-scroll-container {
+  overflow-y: auto !important;
+  scrollbar-width: thin;
+  scrollbar-color: #0284C7 #F1F5F9;
+}
+.vessel-scroll-container::-webkit-scrollbar {
+  width: 8px !important;
+}
+.vessel-scroll-container::-webkit-scrollbar-track {
+  background: #F8FAFC !important;
+  border-left: 1px solid #E2E8F0 !important;
+}
+.vessel-scroll-container::-webkit-scrollbar-thumb {
+  background: #94A3B8 !important;
+  border-radius: 4px !important;
+}
+.vessel-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: #0284C7 !important;
+}
+
+
 /* Leaflet Overrides for Clinical Light Theme */
 .leaflet-container {
   width: 100%;

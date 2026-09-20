@@ -289,10 +289,39 @@ export const VesselAttributionPanel: React.FC<VesselAttributionPanelProps> = ({
                 </span>
 
                 <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                     <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#ffffff' }}>
                       {vessel.vessel_name}
                     </span>
+                    {vessel.is_authentic_real ? (
+                      <span
+                        style={{
+                          fontSize: '0.55rem',
+                          fontWeight: 800,
+                          background: 'rgba(16, 185, 129, 0.2)',
+                          color: '#10b981',
+                          border: '1px solid #10b981',
+                          padding: '1px 4px',
+                          borderRadius: '3px',
+                        }}
+                      >
+                        AUTHENTIC-MEASURED
+                      </span>
+                    ) : (
+                      <span
+                        style={{
+                          fontSize: '0.55rem',
+                          fontWeight: 700,
+                          background: 'rgba(255, 255, 255, 0.08)',
+                          color: 'var(--text-muted)',
+                          border: '1px solid rgba(255, 255, 255, 0.15)',
+                          padding: '1px 4px',
+                          borderRadius: '3px',
+                        }}
+                      >
+                        CORRIDOR-BENCHMARK
+                      </span>
+                    )}
                     {vessel.is_ais_dark_suspect && (
                       <span
                         style={{
@@ -311,6 +340,7 @@ export const VesselAttributionPanel: React.FC<VesselAttributionPanelProps> = ({
                   </div>
                   <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
                     {vessel.vessel_type} &bull; Flag: {vessel.flag} &bull; MMSI: {vessel.mmsi}
+                    {vessel.data_source && ` &bull; [${vessel.data_source}]`}
                   </span>
                 </div>
               </div>

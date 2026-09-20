@@ -16,3 +16,4 @@ xhtml2pdf>=0.2.18
 weasyprint>=62.0
 jinja2>=3.1.0
 web3>=6.0.0
+global-land-mask>=1.0.0

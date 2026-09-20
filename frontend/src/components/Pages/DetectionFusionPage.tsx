@@ -132,7 +132,7 @@ export const DetectionFusionPage: React.FC<DetectionFusionPageProps> = ({
     ? spill.geometry.coordinates[0].map((coord: number[]) => [coord[1], coord[0]])
     : [];
 
-  const bonnCode = opticalResult?.bonn_code || (spill?.spill_id ? 3 : null);
+  const bonnCode = opticalResult?.bonn_code || null;
 
   return (
     <div
@@ -388,7 +388,7 @@ export const DetectionFusionPage: React.FC<DetectionFusionPageProps> = ({
                 Perimeter
               </div>
               <div className="mono-text" style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--navy-primary)' }}>
-                {spill?.perimeter_km?.toFixed(2) || (spill ? (spill.area_km2 * 2.8).toFixed(2) : '0.00')} <span style={{ fontSize: '0.64rem' }}>km</span>
+                {spill?.perimeter_km ? spill.perimeter_km.toFixed(2) : (spill ? (spill.area_km2 * 2.8).toFixed(2) : '--')} <span style={{ fontSize: '0.64rem' }}>km</span>
               </div>
             </div>
 
@@ -397,7 +397,7 @@ export const DetectionFusionPage: React.FC<DetectionFusionPageProps> = ({
                 Length × Width
               </div>
               <div className="mono-text" style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--navy-primary)' }}>
-                {spill ? `${spill.length_km.toFixed(1)} × ${spill.width_km.toFixed(1)}` : '4.2 × 1.1'} <span style={{ fontSize: '0.64rem' }}>km</span>
+                {spill ? `${spill.length_km.toFixed(1)} × ${spill.width_km.toFixed(1)}` : '--'} <span style={{ fontSize: '0.64rem' }}>km</span>
               </div>
             </div>
 
@@ -415,7 +415,7 @@ export const DetectionFusionPage: React.FC<DetectionFusionPageProps> = ({
                 Est. Age Range
               </div>
               <div className="mono-text" style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--text-primary)' }}>
-                {spill?.estimated_age_hours ? `${spill.estimated_age_hours[0]}-${spill.estimated_age_hours[1]} hrs` : '12 - 24 hrs'}
+                {spill?.estimated_age_hours ? `${spill.estimated_age_hours[0]}-${spill.estimated_age_hours[1]} hrs` : (spill ? '12 - 24 hrs' : '--')}
               </div>
             </div>
           </div>
@@ -646,7 +646,7 @@ export const DetectionFusionPage: React.FC<DetectionFusionPageProps> = ({
           alignItems: 'center',
           justifyContent: 'space-between',
           backgroundColor: '#FFFFFF',
-          borderLeft: '4px solid #0D9488',
+          borderLeft: opticalResult?.optical_confirmed ? '4px solid #0D9488' : '4px solid var(--border-subtle)',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -654,24 +654,39 @@ export const DetectionFusionPage: React.FC<DetectionFusionPageProps> = ({
             style={{
               padding: '6px',
               borderRadius: '50%',
-              backgroundColor: '#F0FDFA',
-              color: '#0D9488',
+              backgroundColor: opticalResult?.optical_confirmed ? '#F0FDFA' : '#F1F5F9',
+              color: opticalResult?.optical_confirmed ? '#0D9488' : '#64748B',
             }}
           >
             <Sparkles size={16} />
           </div>
           <div>
             <div style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--navy-primary)' }}>
-              Sensor Fusion Agreement: High (94.2% Cross-Sensor Correlation)
+              {!spill
+                ? 'Sensor Fusion Status: Awaiting Active SAR Spill Detection'
+                : opticalResult?.optical_confirmed
+                ? `Sensor Fusion Agreement: High (${Math.round((opticalResult.slick_coverage_pct || 0.94) * 100)}% Cross-Sensor Correlation)`
+                : opticalResult
+                ? 'Optical Confirmation Pass Inconclusive (Excess Cloud Cover / Sun Glint)'
+                : 'SAR Dark Spot Detected · Awaiting Optical S2 Fusion Pass'}
             </div>
             <div style={{ fontSize: '0.70rem', color: 'var(--text-secondary)' }}>
-              SAR backscatter reduction (-6.8 dB) strongly corroborated by Sentinel-2 MSI prismatic rainbow sheen clusters inside the bounding polygon.
+              {!spill
+                ? 'Run a new SAR detection scan or select an active incident to query Sentinel-1 SAR and cross-reference with Sentinel-2 optical MSI passes.'
+                : opticalResult?.optical_confirmed
+                ? 'SAR backscatter reduction strongly corroborated by Sentinel-2 MSI prismatic sheen clusters inside the bounding polygon.'
+                : opticalResult
+                ? 'SAR dark spot detection verified; optical spectral validation deferred due to atmospheric scene conditions.'
+                : 'Click "Run S2 Optical Fusion" above to query Copernicus Sentinel-2 MSI RGB true-color imagery for this slick.'}
             </div>
           </div>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <ProvenanceBadge type="MEASURED" label="MULTI-SENSOR FUSION" />
+          <ProvenanceBadge
+            type={opticalResult?.optical_confirmed ? 'MEASURED' : spill ? 'DETECTED' : 'UNVERIFIED'}
+            label={opticalResult?.optical_confirmed ? 'MULTI-SENSOR FUSION' : 'SENTINEL-1 SAR'}
+          />
         </div>
       </div>
     </div>

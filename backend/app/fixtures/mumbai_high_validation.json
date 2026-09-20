@@ -1,0 +1,239 @@
+{
+  "fixture_id": "mumbai_high_validation",
+  "title": "Mumbai High Offshore Tanker Discharge",
+  "region": "Arabian Sea, India",
+  "incident_date": "2026-09-06T14:30:00Z",
+  "description": "Historical validation scenario featuring a VLCC crude carrier illegal tank-cleaning discharge in the high-density Mumbai shipping lane.",
+  "tags": ["SAR Verified", "Drift Hindcast", "ML Anomaly 0.92", "Bonn Code 3"],
+  "assembled_at": "2026-09-07T06:00:00Z",
+  "provenance": "VALIDATION-FIXTURE",
+  "provenance_registry": {
+    "detection": "DETECTED",
+    "environmental_currents_wind": "MEASURED",
+    "drift_hindcast_forecast": "MODEL-PREDICTED",
+    "vessel_anomaly_attribution": "ANOMALY-FLAGGED",
+    "optical_fusion": "MEASURED",
+    "sar_thickness": "MODEL-PREDICTED"
+  },
+  "spill": {
+    "spill_id": "mumbai_high_validation",
+    "detected_at": "2026-09-06T14:30:00Z",
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [72.385, 19.420],
+          [72.412, 19.455],
+          [72.445, 19.490],
+          [72.460, 19.480],
+          [72.430, 19.440],
+          [72.395, 19.410],
+          [72.385, 19.420]
+        ]
+      ]
+    },
+    "area_km2": 8.45,
+    "perimeter_km": 19.82,
+    "centroid": [72.420, 19.450],
+    "length_km": 9.15,
+    "width_km": 1.25,
+    "bbox": [72.385, 19.410, 72.460, 19.490],
+    "orientation_deg": 138.5,
+    "confidence": 0.94,
+    "estimated_age_hours": [6.0, 14.0],
+    "source_image": "S1A_IW_GRDH_1SDV_20260906T143000_MUMBAI_HIGH",
+    "provenance": "DETECTED",
+    "wind_speed_ms": 5.8,
+    "wind_direction_deg": 225.0,
+    "aspect_ratio": 7.32,
+    "radar_band": "C-SAR (VV)"
+  },
+  "drift": {
+    "spill_id": "mumbai_high_validation",
+    "simulated_at": "2026-09-06T15:00:00Z",
+    "provenance": "MODEL-PREDICTED",
+    "particle_count": 800,
+    "backward": {
+      "origin_centroid": [72.310, 19.340],
+      "estimated_origin_time_window": {
+        "start": "2026-09-06T00:30:00Z",
+        "end": "2026-09-06T08:30:00Z",
+        "most_likely": "2026-09-06T04:30:00Z"
+      },
+      "release_confidence": 0.91,
+      "p50_contour": {
+        "type": "Polygon",
+        "coordinates": [[[72.295, 19.325], [72.325, 19.325], [72.325, 19.355], [72.295, 19.355], [72.295, 19.325]]]
+      },
+      "p75_contour": {
+        "type": "Polygon",
+        "coordinates": [[[72.280, 19.310], [72.340, 19.310], [72.340, 19.370], [72.280, 19.370], [72.280, 19.310]]]
+      },
+      "p95_contour": {
+        "type": "Polygon",
+        "coordinates": [[[72.260, 19.290], [72.360, 19.290], [72.360, 19.390], [72.260, 19.390], [72.260, 19.290]]]
+      }
+    },
+    "forward": {
+      "hours_ahead": 24,
+      "predicted_centroid": [72.540, 19.570],
+      "shoreline_threat": false,
+      "distance_to_nearest_coast_km": 72.4,
+      "p50_contour": {
+        "type": "Polygon",
+        "coordinates": [[[72.520, 19.550], [72.560, 19.550], [72.560, 19.590], [72.520, 19.590], [72.520, 19.550]]]
+      },
+      "p75_contour": {
+        "type": "Polygon",
+        "coordinates": [[[72.500, 19.530], [72.580, 19.530], [72.580, 19.610], [72.500, 19.610], [72.500, 19.530]]]
+      },
+      "p95_contour": {
+        "type": "Polygon",
+        "coordinates": [[[72.470, 19.500], [72.610, 19.500], [72.610, 19.640], [72.470, 19.640], [72.470, 19.500]]]
+      }
+    },
+    "vector_field": {
+      "ocean_arrows": [
+        {"lon": 72.35, "lat": 19.40, "u_ms": 0.22, "v_ms": 0.18, "speed_ms": 0.28, "direction_deg": 50.7},
+        {"lon": 72.45, "lat": 19.45, "u_ms": 0.25, "v_ms": 0.19, "speed_ms": 0.31, "direction_deg": 52.8}
+      ],
+      "wind_arrows": [
+        {"lon": 72.35, "lat": 19.40, "u_ms": 4.10, "v_ms": 4.10, "speed_ms": 5.80, "direction_deg": 45.0},
+        {"lon": 72.45, "lat": 19.45, "u_ms": 4.25, "v_ms": 4.05, "speed_ms": 5.87, "direction_deg": 46.4}
+      ]
+    },
+    "particle_trajectories": []
+  },
+  "vessels": {
+    "spill_id": "mumbai_high_validation",
+    "analyzed_at": "2026-09-06T15:10:00Z",
+    "provenance": "ANOMALY-FLAGGED",
+    "disclaimer": "DISCLAIMER: Suspect rankings are based on kinematic and spatiotemporal anomaly modeling and do not constitute legal proof.",
+    "search_criteria": {
+      "origin_bbox": [72.15, 19.20, 72.45, 19.50],
+      "time_window_start": "2026-09-05T20:00:00Z",
+      "time_window_end": "2026-09-06T12:00:00Z",
+      "padding_hours": 12.0
+    },
+    "total_vessels_in_corridor": 18,
+    "candidate_vessels_count": 3,
+    "candidate_vessels": [
+      {
+        "mmsi": 419001234,
+        "imo": 9234567,
+        "vessel_name": "PACIFIC GLORY",
+        "ship_type": "Tanker (VLCC)",
+        "flag_country": "Liberia",
+        "length_m": 332.0,
+        "width_m": 60.0,
+        "closest_approach_distance_km": 0.42,
+        "closest_approach_time": "2026-09-06T04:25:00Z",
+        "temporal_proximity_score": 0.94,
+        "spatial_proximity_score": 0.96,
+        "kinematic_anomaly_score": 0.89,
+        "heading_alignment_score": 0.91,
+        "ais_gap_detected": true,
+        "ais_gap_duration_minutes": 48.0,
+        "suspect_score": 0.92,
+        "provenance": "ANOMALY-FLAGGED",
+        "features": {
+          "cpa_distance_km": 0.42,
+          "cpa_time_delta_h": 0.08,
+          "course_slick_alignment_deg": 7.2,
+          "speed_variance_knots": 4.8,
+          "ais_gap_duration_min": 48.0,
+          "loitering_duration_min": 35.0,
+          "isolation_forest_score": -0.42,
+          "heuristic_score": 0.94
+        },
+        "track": [
+          {"lon": 72.250, "lat": 19.280, "sog_knots": 14.2, "cog_deg": 139.0, "timestamp": "2026-09-06T03:00:00Z"},
+          {"lon": 72.310, "lat": 19.340, "sog_knots": 8.1, "cog_deg": 138.5, "timestamp": "2026-09-06T04:25:00Z"},
+          {"lon": 72.380, "lat": 19.410, "sog_knots": 13.9, "cog_deg": 140.0, "timestamp": "2026-09-06T06:00:00Z"}
+        ]
+      },
+      {
+        "mmsi": 353005678,
+        "imo": 9456789,
+        "vessel_name": "OCEAN VANGUARD",
+        "ship_type": "Crude Oil Carrier",
+        "flag_country": "Panama",
+        "length_m": 274.0,
+        "width_m": 48.0,
+        "closest_approach_distance_km": 3.85,
+        "closest_approach_time": "2026-09-06T03:15:00Z",
+        "temporal_proximity_score": 0.68,
+        "spatial_proximity_score": 0.62,
+        "kinematic_anomaly_score": 0.41,
+        "heading_alignment_score": 0.72,
+        "ais_gap_detected": false,
+        "ais_gap_duration_minutes": 0.0,
+        "suspect_score": 0.58,
+        "provenance": "ANOMALY-FLAGGED",
+        "features": {
+          "cpa_distance_km": 3.85,
+          "cpa_time_delta_h": 1.25,
+          "course_slick_alignment_deg": 24.0,
+          "speed_variance_knots": 1.2,
+          "ais_gap_duration_min": 0.0,
+          "loitering_duration_min": 0.0,
+          "isolation_forest_score": 0.12,
+          "heuristic_score": 0.58
+        },
+        "track": [
+          {"lon": 72.220, "lat": 19.250, "sog_knots": 13.5, "cog_deg": 142.0, "timestamp": "2026-09-06T02:00:00Z"},
+          {"lon": 72.340, "lat": 19.370, "sog_knots": 13.4, "cog_deg": 141.0, "timestamp": "2026-09-06T03:45:00Z"}
+        ]
+      }
+    ],
+    "scoring_weights": {
+      "temporal_proximity": 0.25,
+      "spatial_proximity": 0.30,
+      "kinematic_anomaly": 0.25,
+      "heading_alignment": 0.20
+    }
+  },
+  "optical": {
+    "spill_id": "mumbai_high_validation",
+    "analyzed_at": "2026-09-06T15:20:00Z",
+    "optical_confirmed": true,
+    "reason": "Cloud-free Sentinel-2 MSI scene confirmed metallic/rainbow sheen inside SAR polygon",
+    "sentinel2_scene_id": "S2B_MSIL2A_20260906T054500_R090_MUMBAI_HIGH",
+    "bonn_code": 3,
+    "bonn_label": "Metallic Sheen (BAOAC 3)",
+    "estimated_thickness_range_um": "5.0 - 50.0 μm",
+    "provenance": "MEASURED",
+    "rgb_composite_available": true,
+    "hue_clusters": [
+      {"cluster_id": 1, "color_hex": "#8A9BA8", "percentage": 58.4, "description": "Metallic surface reflectance"},
+      {"cluster_id": 2, "color_hex": "#D4AF37", "percentage": 31.2, "description": "Rainbow dispersion band"},
+      {"cluster_id": 3, "color_hex": "#3A4D59", "percentage": 10.4, "description": "Intermediate oil emulsion"}
+    ]
+  },
+  "sar_thickness": {
+    "spill_id": "mumbai_high_validation",
+    "analyzed_at": "2026-09-06T15:25:00Z",
+    "classification": "intermediate",
+    "confidence": 0.89,
+    "backscatter_contrast_db": 6.84,
+    "fragmentation_index": 0.42,
+    "cross_validated_with_optical": true,
+    "provenance": "MODEL-PREDICTED",
+    "details": "SAR sigma-0 backscatter contrast of 6.84 dB matches Bonn Code 3 Metallic sheen",
+    "glcm_features": {
+      "contrast": 0.34,
+      "homogeneity": 0.81,
+      "energy": 0.45,
+      "entropy": 1.28,
+      "correlation": 0.76,
+      "dissimilarity": 0.29
+    }
+  },
+  "stats": {
+    "area_km2": 8.45,
+    "top_suspect": "PACIFIC GLORY",
+    "top_score": 0.92,
+    "thickness_class": "intermediate",
+    "bonn_code": 3
+  }
+}

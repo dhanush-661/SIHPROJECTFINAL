@@ -1,8 +1,9 @@
 import json
 import os
 import logging
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, Body, status
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -23,6 +24,11 @@ from app.schemas.spill import (
     PresetAOI,
     SpillRecord,
 )
+from app.schemas.monitor import (
+    AOIMonitorCreate,
+    AOIMonitorUpdate,
+    AOIMonitorRecord,
+)
 from app.schemas.evidence import (
     AnchorRequest,
     ChainVerificationResponse,
@@ -40,6 +46,15 @@ from app.schemas.vessel import (
     VesselCorrelationRequest,
     VesselCorrelationResponse,
 )
+from app.schemas.validation import (
+    ExternalIncident,
+    ExternalIncidentCreate,
+    ExternalIncidentImportRequest,
+    ValidationRunRequest,
+    ValidationComparisonRecord,
+    ValidationRunResponse,
+)
+from app.services.ais_importer import ais_importer
 from app.services.anchor_service import anchor_service
 from app.services.anomaly_scorer import anomaly_scorer
 from app.services.ais_engine import ais_engine
@@ -47,22 +62,43 @@ from app.services.copernicus_service import copernicus_cds_service
 from app.services.db_service import db_service
 from app.services.drift_engine import drift_engine
 from app.services.evidence_service import evidence_service
+from app.services.external_incident_service import ExternalIncidentService
+from app.services.gee_auth import gee_auth_service
 from app.services.hydrodynamics import hydrodynamics
 from app.services.live_ais_service import live_ais_service
+from app.services.live_scheduler import live_scheduler_service, ws_manager
 from app.services.optical_fusion_service import optical_fusion_service
 from app.services.report_service import report_service, REPORTS_DIR
 from app.services.sar_engine import SAREngine
 from app.services.sar_thickness_service import sar_thickness_service
-
-load_dotenv()
+from app.services.testing_service import testing_service, ValidationDatasetMetadata
+from app.services.validation_service import ValidationService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("marine_detection_api")
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if os.getenv("TESTING") != "1":
+        logger.info("Initializing Live Detection Scheduler...")
+        live_scheduler_service.start()
+        logger.info("Initializing Live AIS Ingestion Service...")
+        await live_ais_service.start()
+    yield
+    if os.getenv("TESTING") != "1":
+        logger.info("Shutting down Live AIS Ingestion Service...")
+        await live_ais_service.stop()
+        logger.info("Shutting down Live Detection Scheduler...")
+        live_scheduler_service.shutdown()
+
+
+
 app = FastAPI(
     title="AquaSentinel — Marine Oil-Spill Detection & Vessel Attribution Platform API",
     description="SIH 2026 Prototype — Sentinel-1 SAR dark spot segmentation, UTM geospatial metrics, Copernicus/ERA5 drift simulation, AIS spatiotemporal correlation, ML anomaly attribution, Sentinel-2 optical fusion (Bonn Agreement) & SAR thickness classification.",
-    version="4.0.0"
+    version="4.0.0",
+    lifespan=lifespan
 )
 
 # Enable CORS for frontend
@@ -139,11 +175,14 @@ PRESETS: List[PresetAOI] = [
 
 @app.get("/api/v1/health")
 def get_health() -> Dict[str, Any]:
+    gee_status = gee_auth_service.get_status()
     return {
         "status": "HEALTHY",
         "service": "AquaSentinel Marine Detection, Drift & Vessel Attribution Platform",
-        "gee_connected": sar_engine.ee_initialized,
-        "mode": "GEE_LIVE" if sar_engine.ee_initialized else "SAR_GEOENGINE_HIGH_FIDELITY",
+        "gee_connected": gee_status.get("initialized", False),
+        "gee_auth": gee_status,
+        "scheduler_active": live_scheduler_service.is_running,
+        "mode": "GEE_LIVE" if gee_status.get("initialized", False) else "SAR_GEOENGINE_HIGH_FIDELITY",
         "database": "CONNECTED",
         "hydrodynamic_models": [
             "Copernicus Marine MULTIOBS_GLO_PHY_MYNRT_015_003 (Surface Currents)",
@@ -170,6 +209,102 @@ def get_health() -> Dict[str, Any]:
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Live AOI Monitoring & Polling Endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/v1/aoi-monitors", response_model=List[AOIMonitorRecord])
+def list_aoi_monitors(active_only: bool = False) -> List[AOIMonitorRecord]:
+    """
+    Lists all configured AOI monitors or only currently active ones.
+    """
+    return db_service.get_monitors(active_only=active_only)
+
+
+@app.post("/api/v1/aoi-monitors", response_model=AOIMonitorRecord, status_code=status.HTTP_201_CREATED)
+def create_aoi_monitor(monitor: AOIMonitorCreate) -> AOIMonitorRecord:
+    """
+    Creates and activates a new automated AOI monitor.
+    """
+    record = db_service.create_monitor(monitor)
+    if record.is_active:
+        live_scheduler_service.reschedule_monitor(record.id, record.poll_interval_hours)
+    return record
+
+
+@app.get("/api/v1/aoi-monitors/{monitor_id}", response_model=AOIMonitorRecord)
+def get_aoi_monitor(monitor_id: str) -> AOIMonitorRecord:
+    """
+    Retrieves status, scene history, and metrics for a specific AOI monitor.
+    """
+    mon = db_service.get_monitor(monitor_id)
+    if not mon:
+        raise HTTPException(status_code=404, detail=f"AOI Monitor '{monitor_id}' not found.")
+    return mon
+
+
+@app.patch("/api/v1/aoi-monitors/{monitor_id}", response_model=AOIMonitorRecord)
+def update_aoi_monitor(monitor_id: str, updates: AOIMonitorUpdate) -> AOIMonitorRecord:
+    """
+    Updates configuration, polling interval, or active status of an AOI monitor.
+    """
+    mon = db_service.update_monitor(monitor_id, updates)
+    if not mon:
+        raise HTTPException(status_code=404, detail=f"AOI Monitor '{monitor_id}' not found.")
+    if mon.is_active:
+        live_scheduler_service.reschedule_monitor(mon.id, mon.poll_interval_hours)
+    else:
+        live_scheduler_service.remove_monitor_job(mon.id)
+    return mon
+
+
+@app.delete("/api/v1/aoi-monitors/{monitor_id}")
+def delete_aoi_monitor(monitor_id: str) -> Dict[str, Any]:
+    """
+    Deletes an AOI monitor and removes its scheduled background task.
+    """
+    live_scheduler_service.remove_monitor_job(monitor_id)
+    deleted = db_service.delete_monitor(monitor_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"AOI Monitor '{monitor_id}' not found.")
+    return {"success": True, "deleted_monitor_id": monitor_id}
+
+
+@app.post("/api/v1/aoi-monitors/{monitor_id}/poll-now")
+async def poll_aoi_monitor_now(monitor_id: str) -> Dict[str, Any]:
+    """
+    Triggers an immediate forced poll for a specific AOI monitor, bypassing deduplication if requested.
+    """
+    result = await live_scheduler_service.poll_aoi_monitor(monitor_id, force_run=True)
+    return result
+
+
+@app.get("/api/v1/alerts")
+def get_live_alerts() -> List[Dict[str, Any]]:
+    """
+    Returns recent live detection alerts.
+    """
+    return ws_manager.get_recent_alerts()
+
+
+@app.websocket("/api/v1/ws/live-alerts")
+async def websocket_live_alerts(websocket: WebSocket):
+    """
+    Real-time WebSocket endpoint for pushing live Sentinel-1 detection alerts to connected dashboards.
+    """
+    await ws_manager.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text("pong")
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
+    except Exception as e:
+        logger.warning(f"Live alerts websocket connection error: {e}")
+        ws_manager.disconnect(websocket)
+
+
 @app.get("/api/v1/presets", response_model=List[PresetAOI])
 def get_presets() -> List[PresetAOI]:
     return PRESETS
@@ -191,18 +326,32 @@ def detect_oil_spills(request: DetectionRequest) -> DetectionResponse:
         
         # Persist all detected spills to database & append to evidence ledger
         for spill in spills:
-            db_service.save_spill(spill)
+            saved_id = db_service.save_spill(spill)
             evidence_service.record_stage(
-                spill_id=spill.spill_id,
+                spill_id=saved_id,
                 stage="detection",
                 payload=spill.model_dump() if hasattr(spill, "model_dump") else spill,
                 stage_timestamp=spill.detected_at
             )
 
+        # Purge any spatial-temporal duplicates that may have accumulated
+        # (e.g. repeated scans of same AOI/date producing near-identical centroids)
+        dedup_result = db_service.deduplicate_all_spills(distance_threshold_km=3.0)
+        logger.info(f"Post-detection dedup: purged={dedup_result['purged_duplicates_count']}, retained={dedup_result['retained_unique_spills_count']}")
+
+        # Return the canonical deduplicated spills from the database
+        canonical_spills = db_service.get_all_spills(limit=len(spills) + 10)
+        # Filter to only spills from this detection run (same spill_ids)
+        detected_ids = {s.spill_id for s in spills}
+        # Also include any that were merged into an existing record
+        response_spills = [s for s in canonical_spills if s.spill_id in detected_ids]
+        if not response_spills:
+            response_spills = canonical_spills[:len(spills)]
+
         return DetectionResponse(
             success=True,
-            spills_detected_count=len(spills),
-            spills=spills,
+            spills_detected_count=len(response_spills),
+            spills=response_spills,
             aoi_bbox=metadata["aoi_bbox"],
             processing_metadata=metadata
         )
@@ -345,6 +494,28 @@ def get_vessel_correlation(spill_id: str) -> VesselCorrelationResponse:
             pass
 
     return correlate_vessels_for_spill(spill_id, VesselCorrelationRequest())
+
+
+@app.get("/api/v1/ais/gfw-status")
+@app.get("/ais/gfw-status")
+def get_gfw_gateway_status() -> Dict[str, Any]:
+    """
+    Returns Global Fishing Watch v3 cloud gateway authentication and readiness status.
+    """
+    return ais_engine.get_gfw_status()
+
+
+@app.post("/api/v1/vessels/gfw-fetch/{spill_id}", response_model=VesselCorrelationResponse)
+@app.post("/vessels/gfw-fetch/{spill_id}", response_model=VesselCorrelationResponse)
+def trigger_gfw_online_fetch(spill_id: str) -> VesselCorrelationResponse:
+    """
+    Triggers on-demand direct query to Global Fishing Watch (GFW) v3 Gateway API,
+    persists all authentic vessel telemetry points for this spill's bounding box and release window into SQLite,
+    and returns freshly computed anomaly attribution rankings.
+    """
+    req = VesselCorrelationRequest(fetch_online_gfw=True, strict_real_ais_only=False)
+    return correlate_vessels_for_spill(spill_id, req)
+
 
 
 @app.post("/api/v1/fusion/{spill_id}", response_model=OpticalConfirmationResponse)
@@ -518,6 +689,26 @@ def get_spill_by_id(spill_id: str) -> SpillRecord:
     if not spill:
         raise HTTPException(status_code=404, detail=f"Spill with ID '{spill_id}' not found.")
     return spill
+
+
+@app.delete("/api/v1/spills/{spill_id}")
+def delete_spill(spill_id: str) -> Dict[str, Any]:
+    db_service.delete_spill(spill_id)
+    _drift_cache.pop(spill_id, None)
+    _vessels_cache.pop(spill_id, None)
+    _optical_cache.pop(spill_id, None)
+    _thickness_cache.pop(spill_id, None)
+    return {"success": True, "deleted_spill_id": spill_id}
+
+
+@app.delete("/api/v1/spills")
+def clear_all_spills() -> Dict[str, Any]:
+    db_service.clear_all_spills()
+    _drift_cache.clear()
+    _vessels_cache.clear()
+    _optical_cache.clear()
+    _thickness_cache.clear()
+    return {"success": True, "cleared_all": True}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -731,6 +922,9 @@ async def websocket_live_ais_stream(websocket: WebSocket):
         live_ais_service.remove_subscriber(queue)
 
 
+
+
+
 @app.get("/api/v1/live/copernicus")
 def get_live_copernicus_marine(
     lon: float = 72.40,
@@ -762,5 +956,342 @@ def get_live_copernicus_marine(
 @app.get("/api/v1/stats")
 def get_analytics_stats() -> Dict[str, Any]:
     return db_service.get_statistics()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dedicated Historical Validation & Testing Endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/v1/testing/datasets", response_model=List[ValidationDatasetMetadata])
+def get_testing_datasets() -> List[ValidationDatasetMetadata]:
+    """
+    Returns available historical validation datasets and fixtures for the dedicated Testing Page.
+    Strictly isolated from live operational databases and tables.
+    """
+    return testing_service.list_validation_datasets()
+
+
+@app.get("/api/v1/testing/spill/{fixture_id}")
+def get_testing_spill_bundle(fixture_id: str) -> Dict[str, Any]:
+    """
+    Retrieves full assembled fixture bundle for a selected historical validation incident.
+    """
+    bundle = testing_service.get_fixture_bundle(fixture_id)
+    if not bundle:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Historical validation dataset '{fixture_id}' not found."
+        )
+    return bundle
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Real-Time Live AIS Telemetry Endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/v1/live-ais/status")
+def get_live_ais_status() -> Dict[str, Any]:
+    """
+    Returns real-time status of AISStream.io and Global Fishing Watch ingestion services.
+    """
+    return {
+        "aisstream": live_ais_service.get_status(),
+        "gfw": ais_engine.get_gfw_status()
+    }
+
+
+@app.get("/api/v1/live-ais/vessels")
+async def get_live_ais_vessels(
+    min_lon: Optional[float] = None,
+    min_lat: Optional[float] = None,
+    max_lon: Optional[float] = None,
+    max_lat: Optional[float] = None,
+    limit: int = 100
+) -> List[Dict[str, Any]]:
+    """
+    Returns real-time tracked live AIS vessels optionally bounded by a geographic bounding box.
+    """
+    bbox = None
+    if None not in (min_lon, min_lat, max_lon, max_lat):
+        bbox = [min_lon, min_lat, max_lon, max_lat]
+    return await live_ais_service.get_live_vessels(bbox=bbox, limit=limit)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dedicated External Reference Incident Database & Pipeline Validation
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/v1/external-incidents", response_model=List[ExternalIncident])
+def get_external_incidents(
+    min_lon: Optional[float] = None,
+    min_lat: Optional[float] = None,
+    max_lon: Optional[float] = None,
+    max_lat: Optional[float] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    limit: int = 100
+) -> List[ExternalIncident]:
+    """
+    Queries verified external ground-truth reference incidents for pipeline benchmarking.
+    CRITICAL: Strict provenance is EXTERNAL-REFERENCE. Never mixed into operational oil_spills.
+    """
+    bbox = None
+    if None not in (min_lon, min_lat, max_lon, max_lat):
+        bbox = [min_lon, min_lat, max_lon, max_lat]
+    return db_service.get_external_incidents(
+        bbox=bbox,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit
+    )
+
+
+@app.get("/api/v1/external-incidents/{incident_id}", response_model=ExternalIncident)
+def get_external_incident_by_id(incident_id: str) -> ExternalIncident:
+    """
+    Fetches a specific external reference ground-truth incident.
+    """
+    incident = db_service.get_external_incident_by_id(incident_id)
+    if not incident:
+        raise HTTPException(
+            status_code=404,
+            detail=f"External reference incident '{incident_id}' not found."
+        )
+    return incident
+
+
+@app.post("/api/v1/external-incidents/import", response_model=Dict[str, Any])
+def import_external_incidents(import_req: ExternalIncidentImportRequest) -> Dict[str, Any]:
+    """
+    Imports a batch of external reference incidents (from SkyTruth, NOAA, CleanSeaNet, etc.).
+    """
+    normalized_list: List[ExternalIncident] = []
+    for inc in import_req.incidents:
+        norm = ExternalIncidentService.normalize_incident_record(
+            inc.model_dump(),
+            default_source=import_req.source_name
+        )
+        normalized_list.append(norm)
+
+    imported_count = db_service.save_external_incidents_batch(normalized_list)
+    return {
+        "success": True,
+        "imported_count": imported_count,
+        "message": f"Successfully imported {imported_count} external reference incidents with EXTERNAL-REFERENCE provenance."
+    }
+
+
+@app.post("/api/v1/external-incidents/seed", response_model=Dict[str, Any])
+def seed_external_incidents() -> Dict[str, Any]:
+    """
+    Re-seeds the verified real-world ground-truth reference catalog into external_incidents table.
+    """
+    count = db_service.seed_external_incidents_force()
+    return {
+        "success": True,
+        "seeded_count": count,
+        "message": f"Seeded {count} verified real-world ground-truth reference records (Wakashio, Ennore, Mumbai High, Malacca, Taylor Energy, Red Sea)."
+    }
+
+
+@app.delete("/api/v1/external-incidents/{incident_id}")
+def delete_external_incident(incident_id: str) -> Dict[str, Any]:
+    """
+    Deletes an external reference incident.
+    """
+    deleted = db_service.delete_external_incident(incident_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail=f"External reference incident '{incident_id}' not found."
+        )
+    return {"success": True, "incident_id": incident_id}
+
+
+@app.post("/api/v1/validation/run", response_model=ValidationRunResponse)
+def execute_validation_run(request: ValidationRunRequest) -> ValidationRunResponse:
+    """
+    Executes a validation pass comparing AquaSentinel's Sentinel-1 detection pipeline against
+    publicly reported real-world ground-truth reference incidents for an AOI and time window.
+    """
+    try:
+        return ValidationService.run_validation(request)
+    except Exception as e:
+        logger.exception("Error executing validation run: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Validation execution failed: {str(e)}"
+        )
+
+
+@app.get("/api/v1/validation/results", response_model=List[Dict[str, Any]])
+def get_validation_results(limit: int = 20) -> List[Dict[str, Any]]:
+    """
+    Retrieves historical validation run benchmark results.
+    """
+    return db_service.get_validation_runs(limit=limit)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 3 — Historical AIS & Vessel Dataset Ingestion Endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.post("/api/v1/ais/import-csv")
+@app.post("/ais/import-csv")
+async def import_ais_csv(request: Request) -> Dict[str, Any]:
+    """
+    Ingests authentic historical AIS dataset from NOAA / GFW / DMA CSV.
+    Supports raw CSV text, JSON payload with 'csv_text', or multipart form data.
+    """
+    try:
+        content_type = request.headers.get("content-type", "")
+        source_label = "CSV_IMPORT"
+        csv_text = ""
+
+        if "multipart/form-data" in content_type:
+            body = await request.body()
+            raw = body.decode("utf-8", errors="replace")
+            lines = raw.splitlines()
+            csv_lines = []
+            in_content = False
+            for line in lines:
+                if "Content-Disposition:" in line and "filename=" in line:
+                    import re
+                    fn_match = re.search(r'filename="([^"]+)"', line)
+                    if fn_match:
+                        source_label = f"CSV:{fn_match.group(1)}"
+                if in_content:
+                    if line.startswith("------"):
+                        break
+                    csv_lines.append(line)
+                elif line.strip() == "" and not in_content:
+                    in_content = True
+            csv_text = "\n".join(csv_lines) if csv_lines else raw
+        elif "application/json" in content_type:
+            try:
+                payload = await request.json()
+                if isinstance(payload, dict):
+                    csv_text = payload.get("csv_text", "")
+                    source_label = payload.get("source_label", source_label)
+                elif isinstance(payload, str):
+                    csv_text = payload
+            except Exception:
+                body = await request.body()
+                csv_text = body.decode("utf-8", errors="replace")
+        else:
+            body = await request.body()
+            csv_text = body.decode("utf-8", errors="replace")
+        
+        if not csv_text.strip():
+            raise HTTPException(status_code=400, detail="Empty CSV data provided.")
+
+        pings, vessels, meta = ais_importer.parse_csv_content(csv_text, source_label=source_label)
+        return {
+            "success": True,
+            "pings_imported": pings,
+            "unique_vessels": vessels,
+            "metadata": meta,
+            "message": f"Successfully ingested {pings} AIS pings across {vessels} vessels with authentic MEASURED provenance."
+        }
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.exception("Error importing AIS CSV: %s", e)
+        raise HTTPException(status_code=500, detail=f"CSV import failed: {str(e)}")
+
+
+@app.post("/api/v1/ais/import-geojson")
+@app.post("/ais/import-geojson")
+async def import_ais_geojson(request: Request) -> Dict[str, Any]:
+    """
+    Ingests authentic AIS vessel tracks from GeoJSON FeatureCollection (Point / LineString).
+    """
+    try:
+        content_type = request.headers.get("content-type", "")
+        source_label = "GEOJSON_IMPORT"
+        data = None
+
+        if "multipart/form-data" in content_type:
+            body = await request.body()
+            raw = body.decode("utf-8", errors="replace")
+            lines = raw.splitlines()
+            json_lines = []
+            in_content = False
+            for line in lines:
+                if "Content-Disposition:" in line and "filename=" in line:
+                    import re
+                    fn_match = re.search(r'filename="([^"]+)"', line)
+                    if fn_match:
+                        source_label = f"GEOJSON:{fn_match.group(1)}"
+                if in_content:
+                    if line.startswith("------"):
+                        break
+                    json_lines.append(line)
+                elif line.strip() == "" and not in_content:
+                    in_content = True
+            data = json.loads("\n".join(json_lines))
+        else:
+            data = await request.json()
+        
+        if not data or not isinstance(data, dict):
+            raise HTTPException(status_code=400, detail="Valid GeoJSON FeatureCollection dictionary is required.")
+
+        pings, vessels, meta = ais_importer.parse_geojson_content(data, source_label=source_label)
+        return {
+            "success": True,
+            "pings_imported": pings,
+            "unique_vessels": vessels,
+            "metadata": meta,
+            "message": f"Successfully ingested {pings} GeoJSON AIS pings across {vessels} vessels."
+        }
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON file provided.")
+    except Exception as e:
+        logger.exception("Error importing AIS GeoJSON: %s", e)
+        raise HTTPException(status_code=500, detail=f"GeoJSON import failed: {str(e)}")
+
+
+@app.get("/api/v1/ais/stats")
+@app.get("/ais/stats")
+def get_historical_ais_stats() -> Dict[str, Any]:
+    """
+    Returns statistics and count breakdown of the local authentic historical AIS database.
+    """
+    return db_service.get_ais_table_stats()
+
+
+@app.delete("/api/v1/ais/clear")
+@app.delete("/ais/clear")
+def clear_historical_ais_database() -> Dict[str, Any]:
+    """
+    Clears all authentic historical AIS pings from the local SQLite store.
+    """
+    count = db_service.clear_historical_ais_pings()
+    return {
+        "success": True,
+        "cleared_records": count,
+        "message": f"Cleared {count} historical AIS telemetry records from database."
+    }
+
+
+@app.get("/api/v1/ais/live-vessels")
+@app.get("/ais/live-vessels")
+async def get_live_ais_vessels_endpoint(
+    min_lon: Optional[float] = None,
+    min_lat: Optional[float] = None,
+    max_lon: Optional[float] = None,
+    max_lat: Optional[float] = None,
+    limit: int = 200
+) -> List[Dict[str, Any]]:
+    """
+    Returns real-time live AIS vessels within the optional bounding box.
+    """
+    bbox = None
+    if all(x is not None for x in [min_lon, min_lat, max_lon, max_lat]):
+        bbox = [min_lon, min_lat, max_lon, max_lat]
+    return await live_ais_service.get_live_vessels(bbox=bbox, limit=limit)
+
+
+
 
 

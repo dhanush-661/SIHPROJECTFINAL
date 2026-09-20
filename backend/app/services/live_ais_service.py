@@ -32,7 +32,9 @@ class LiveAISService:
         self._live_vessels: Dict[int, Dict[str, Any]] = {}
         self._lock = asyncio.Lock() if asyncio.get_event_loop().is_running() else None
         self._ws_task: Optional[asyncio.Task] = None
+        self._persist_task: Optional[asyncio.Task] = None
         self._subscribers: List[asyncio.Queue] = []
+        self._db_ping_buffer: List[Dict[str, Any]] = []
 
     def get_status(self) -> Dict[str, Any]:
         return {
@@ -87,9 +89,11 @@ class LiveAISService:
                 pass
 
     async def start(self):
-        """Starts the background AISStream ingestion loop."""
+        """Starts the background AISStream ingestion loop and persistence flush task."""
         if self._ws_task is None or self._ws_task.done():
             self._ws_task = asyncio.create_task(self._ingestion_loop())
+        if self._persist_task is None or self._persist_task.done():
+            self._persist_task = asyncio.create_task(self._periodic_persist_loop())
 
     async def stop(self):
         if self._ws_task and not self._ws_task.done():
@@ -98,6 +102,37 @@ class LiveAISService:
                 await self._ws_task
             except asyncio.CancelledError:
                 pass
+        if self._persist_task and not self._persist_task.done():
+            self._persist_task.cancel()
+            try:
+                await self._persist_task
+            except asyncio.CancelledError:
+                pass
+        self._flush_pings_to_db()
+
+    def _flush_pings_to_db(self):
+        """Synchronously flushes current buffer to SQLite."""
+        if not self._db_ping_buffer:
+            return
+        try:
+            from app.services.db_service import db_service
+            pings_to_save = list(self._db_ping_buffer)
+            self._db_ping_buffer.clear()
+            db_service.insert_ais_pings_batch(pings_to_save)
+        except Exception as e:
+            logger.debug(f"AIS buffer persist error: {e}")
+
+    async def _periodic_persist_loop(self):
+        """Background loop flushing AIS positions to SQLite every 5 seconds."""
+        while True:
+            try:
+                await asyncio.sleep(5)
+                if len(self._db_ping_buffer) > 0:
+                    await asyncio.to_thread(self._flush_pings_to_db)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug(f"Periodic AIS persist error: {e}")
 
     async def _ingestion_loop(self):
         """Continuous connection & reconnection loop to AISStream.io."""
@@ -168,6 +203,8 @@ class LiveAISService:
                                 if ship_name:
                                     vessel_entry["name"] = ship_name
 
+                                ts_iso = timestamp_str or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
                                 vessel_entry.update({
                                     "mmsi": mmsi,
                                     "lat": round(float(lat), 5),
@@ -176,7 +213,7 @@ class LiveAISService:
                                     "cog": round(float(cog), 1),
                                     "heading": round(float(heading), 1),
                                     "nav_status": nav_status,
-                                    "timestamp": timestamp_str or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                    "timestamp": ts_iso,
                                     "timestamp_epoch": self.last_message_time,
                                     "source": "AISSTREAM_LIVE"
                                 })
@@ -193,6 +230,24 @@ class LiveAISService:
 
                                 self._live_vessels[mmsi] = vessel_entry
                                 await self._broadcast_to_subscribers(vessel_entry)
+
+                                # Buffer for SQLite historical persistence
+                                self._db_ping_buffer.append({
+                                    "mmsi": str(mmsi),
+                                    "vessel_name": vessel_entry.get("name"),
+                                    "ship_type": vessel_entry.get("ship_type", "Vessel"),
+                                    "flag": "International",
+                                    "imo": None,
+                                    "length_m": 150.0,
+                                    "deadweight_tonnage": None,
+                                    "lon": round(float(lon), 5),
+                                    "lat": round(float(lat), 5),
+                                    "sog": round(float(sog), 1),
+                                    "cog": round(float(cog), 1),
+                                    "heading": round(float(heading), 1),
+                                    "timestamp": ts_iso,
+                                    "source": "LIVE_STREAM"
+                                })
 
                         except json.JSONDecodeError:
                             continue

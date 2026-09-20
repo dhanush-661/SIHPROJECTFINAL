@@ -32,10 +32,15 @@ class OpticalConfirmationResponse(BaseModel):
     analyzed_at: str = Field(..., description="ISO 8601 timestamp of the optical fusion analysis")
     optical_confirmed: Optional[bool] = Field(
         None,
-        description="True if confirmed via clean Sentinel-2 scene, False if unconfirmed, null if no clean scene exists"
+        description="True if confirmed via clean Sentinel-2 scene, False if unconfirmed/terrestrial rejection, null if no clean scene exists"
     )
     reason: Optional[str] = Field(None, description="Detailed explanatory reason when confirmation cannot be established")
     
+    # Terrestrial Rejection / Audit Codes
+    rejection_code: Optional[str] = Field(None, description="Audit rejection code if false positive (e.g. FALSE_POSITIVE_TERRESTRIAL)")
+    ndwi: Optional[float] = Field(None, description="Normalized Difference Water Index (Green - NIR) / (Green + NIR)")
+    ndvi: Optional[float] = Field(None, description="Normalized Difference Vegetation Index (NIR - Red) / (NIR + Red)")
+
     # Satellite Scene Metadata
     sentinel2_scene_id: Optional[str] = Field(None, description="Sentinel-2 L2A/SR granule / product ID")
     scene_cloud_cover_pct: Optional[float] = Field(None, description="Cloud cover percentage of the selected Sentinel-2 scene")

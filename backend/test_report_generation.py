@@ -229,3 +229,105 @@ def test_endpoint_report_download():
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "application/pdf"
     assert resp.content.startswith(b'%PDF-')
+
+
+def test_normalize_bonn_code():
+    """Test normalize_bonn_code handles ints, floats, strings, and None."""
+    from app.services.report_service import normalize_bonn_code
+
+    code, color = normalize_bonn_code(2)
+    assert code == "Bonn II"
+    assert color == "#fbbf24"
+
+    code, color = normalize_bonn_code(1)
+    assert code == "Bonn I"
+    assert color == "#38bdf8"
+
+    code, color = normalize_bonn_code(3)
+    assert code == "Bonn III"
+    assert color == "#f97316"
+
+    code, color = normalize_bonn_code(4)
+    assert code == "Bonn IV"
+
+    code, color = normalize_bonn_code(5)
+    assert code == "Bonn V"
+
+    code, color = normalize_bonn_code("Bonn II")
+    assert code == "Bonn II"
+
+    code, color = normalize_bonn_code(None)
+    assert code == "Bonn II"
+
+
+def test_report_generation_with_integer_bonn_code_and_list_origin():
+    """
+    Regression test: Verifies that integer bonn_code (from optical pipeline)
+    and list-type origin_centroid (from drift simulation) do not trigger
+    'TypeError: argument of type int is not iterable' or AttributeError.
+    """
+    spill_id = "test_regression_int_bonn_spill"
+    spill = SpillRecord(
+        spill_id=spill_id,
+        detected_at="2026-09-14T02:00:00Z",
+        geometry={
+            "type": "Polygon",
+            "coordinates": [[[50.65, 28.10], [50.70, 28.10], [50.70, 28.15], [50.65, 28.15], [50.65, 28.10]]]
+        },
+        area_km2=12.5,
+        perimeter_km=18.0,
+        centroid=[50.68, 28.12],
+        length_km=5.0,
+        width_km=2.5,
+        bbox=[50.65, 28.10, 50.70, 28.15],
+        orientation_deg=30.0,
+        confidence=0.92,
+        estimated_age_hours=[8.0, 16.0],
+        source_image="S1_TEST_REGRESSION",
+        provenance="DETECTED"
+    )
+    db_service.save_spill(spill)
+
+    # Drift with list origin_centroid [lon, lat]
+    db_service.save_drift_simulation(spill_id, {
+        "spill_id": spill_id,
+        "backward": {
+            "origin_centroid": [50.681, 28.138],
+            "duration_hours": 12,
+            "metocean_summary": {"mean_wind_speed_ms": 5.0, "mean_current_speed_ms": 0.3}
+        }
+    })
+
+    # Optical with integer bonn_code (e.g. 2)
+    db_service.save_optical_confirmation(spill_id, {
+        "spill_id": spill_id,
+        "optical_confirmed": True,
+        "bonn_code": 2,  # integer from optical pipeline
+        "bonn_label": "Rainbow",
+        "min_thickness_um": 0.3,
+        "max_thickness_um": 5.0
+    })
+
+    # Vessels with candidate vessels
+    db_service.save_vessel_correlation(spill_id, {
+        "spill_id": spill_id,
+        "candidate_vessels": [
+            {
+                "mmsi": "123456789",
+                "name": "REGRESSION TANKER",
+                "suspect_score": 0.75,
+                "distance_to_origin_km": 1.2,
+                "time_delta_minutes": 10.0,
+                "anomaly_type": "Speed Drop",
+                "component_scores": {"proximity_score": 0.8, "temporal_score": 0.7}
+            }
+        ]
+    })
+
+    # Generate report
+    resp = report_service.generate_forensic_report(spill_id)
+    assert resp.spill_id == spill_id
+    assert len(resp.report_hash) == 64
+    assert resp.file_size_bytes > 0
+    assert resp.pages_count == 6
+

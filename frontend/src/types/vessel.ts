@@ -41,6 +41,8 @@ export interface CandidateVessel {
   track: VesselPoint[];
   closest_approach_time: string;
   is_ais_dark_suspect: boolean;
+  is_authentic_real?: boolean;
+  data_source?: string;
 }
 
 export interface SearchCriteria {
@@ -57,6 +59,8 @@ export interface VesselCorrelationRequest {
   weight_temporal?: number;
   weight_trajectory?: number;
   weight_anomaly?: number;
+  strict_real_ais_only?: boolean;
+  fetch_online_gfw?: boolean;
 }
 
 export interface VesselCorrelationResponse {
@@ -67,6 +71,10 @@ export interface VesselCorrelationResponse {
   search_criteria: SearchCriteria;
   total_vessels_in_corridor: number;
   candidate_vessels_count: number;
+  authentic_vessels_count?: number;
+  is_strict_mode?: boolean;
+  gfw_cloud_synced?: boolean;
+  gfw_vessels_fetched?: number;
   candidate_vessels: CandidateVessel[];
   scoring_weights: {
     proximity: number;
@@ -75,3 +83,21 @@ export interface VesselCorrelationResponse {
     ml_anomaly: number;
   };
 }
+
+export interface AisTableStats {
+  total_historical_pings: number;
+  unique_vessels_tracked: number;
+  earliest_timestamp?: string | null;
+  latest_timestamp?: string | null;
+  sources_breakdown: Record<string, number>;
+  status: string;
+}
+
+export interface AisImportResponse {
+  success: boolean;
+  pings_imported: number;
+  unique_vessels: number;
+  metadata?: any;
+  message: string;
+}
+

@@ -1,0 +1,105 @@
+# Historical AIS Persistence & Authentic Vessel Forensics Engine
+
+This plan implements a local historical AIS database, real-time telemetry persistence, CSV/GeoJSON dataset importer, and a "Strict Real AIS Only" attribution mode to ensure that the ML anomaly detection operates exclusively on real, authentic vessels present during the spill window.
+
+---
+
+## Proposed Architectural Flow
+
+```mermaid
+graph TD
+    A["AISStream WebSocket Live Telemetry"] -->|Continuous Stream| B["LiveAISService"]
+    B -->|Batch Insert| C[("SQLite: historical_ais_pings")]
+    D["NOAA / GFW / DMA Historical CSV / GeoJSON"] -->|POST /api/v1/ais/import| E["AIS Import Parser"]
+    E -->|Bulk Ingest| C
+    
+    F["Spill Attribution Query"] --> G["AIS Engine"]
+    C -->|Query Box & Time Window| G
+    
+    G --> H{"Mode: Strict Real AIS Only?"}
+    H -->|YES & Ships Found| I["Isolation Forest on Authentic Real Ships (MEASURED)"]
+    H -->|YES & No Ships Found| J["Return Zero Suspects (MEASURED_HISTORICAL_ZERO)"]
+    H -->|NO & Fallback Allowed| K["Augment / Fallback to Regional Corridor Dataset"]
+```
+
+---
+
+## Proposed Changes
+
+### Database Layer
+
+#### [MODIFY] [db_service.py](file:///c:/Users/dhanu/SIH7926/backend/app/services/db_service.py)
+- Create table `historical_ais_pings` with indexed fields (`mmsi`, `vessel_name`, `ship_type`, `flag`, `imo`, `length_m`, `deadweight_tonnage`, `lon`, `lat`, `sog`, `cog`, `heading`, `timestamp`, `source`).
+- Add helper methods:
+  - `insert_ais_pings_batch(pings: List[Dict]) -> int`
+  - `query_historical_ais_tracks(bbox: List[float], start_time: str, end_time: str) -> List[Dict]` (aggregates pings into vessel tracks with chronologically sorted `VesselPoint` items)
+  - `get_ais_table_stats() -> Dict`
+
+---
+
+### Ingestion & Stream Persistence
+
+#### [MODIFY] [live_ais_service.py](file:///c:/Users/dhanu/SIH7926/backend/app/services/live_ais_service.py)
+- Update WebSocket message handler to buffer and persist live vessel telemetry points directly into SQLite in micro-batches (every 5 seconds or 50 points) without blocking the async event loop.
+
+#### [NEW] [ais_importer.py](file:///c:/Users/dhanu/SIH7926/backend/app/services/ais_importer.py)
+- Fast streaming parser for standard historical AIS formats:
+  - **NOAA Marine Cadastre CSV** (`MMSI`, `BaseDateTime`, `LAT`, `LON`, `SOG`, `COG`, `Heading`, `VesselName`, `IMO`, `VesselType`, `Length`)
+  - **Global Fishing Watch CSV** (`mmsi`, `timestamp`, `lat`, `lon`, `speed`, `course`, `vessel_class`)
+  - **Danish Maritime Authority (DMA) CSV**
+  - **GeoJSON FeatureCollection** (Point & LineString geometries with properties)
+
+---
+
+### Backend API & Schemas
+
+#### [MODIFY] [vessel.py](file:///c:/Users/dhanu/SIH7926/backend/app/schemas/vessel.py)
+- Add `strict_real_ais_only: bool = False` to `VesselCorrelationRequest`.
+- Add `historical_source: Optional[str] = None` and `is_authentic_real: bool = True` to `CandidateVessel` and `VesselCorrelationResponse`.
+
+#### [MODIFY] [ais_engine.py](file:///c:/Users/dhanu/SIH7926/backend/app/services/ais_engine.py)
+- Update `query_vessels_in_corridor`:
+  1. Query `db_service.query_historical_ais_tracks(search_bbox, t_start, t_end)`.
+  2. If real vessels exist, convert directly into candidate profiles.
+  3. If `strict_real_ais_only == True`:
+     - If real vessels found: return authentic tracks with provenance `MEASURED_HISTORICAL_AIS`.
+     - If no real vessels found: return empty array `[]` with provenance `MEASURED_HISTORICAL_ZERO` and an explicit note that zero AIS transponders were active in that corridor.
+  4. If `strict_real_ais_only == False` and no vessels exist: fall back to regional corridor profiles.
+
+#### [MODIFY] [anomaly_scorer.py](file:///c:/Users/dhanu/SIH7926/backend/app/services/anomaly_scorer.py)
+- Support handling 0 or 1-2 authentic vessels gracefully without crashing Isolation Forest.
+
+#### [MODIFY] [main.py](file:///c:/Users/dhanu/SIH7926/backend/app/main.py)
+- Add endpoints:
+  - `POST /api/v1/ais/import-csv`: Upload and ingest historical CSV.
+  - `POST /api/v1/ais/import-geojson`: Upload and ingest GeoJSON.
+  - `GET /api/v1/ais/stats`: Historical database statistics.
+
+---
+
+### Frontend UI
+
+#### [MODIFY] [types/vessel.ts](file:///c:/Users/dhanu/SIH7926/frontend/src/types/vessel.ts)
+- Add `strict_real_ais_only?: boolean` and provenance flags.
+
+#### [MODIFY] [SpillInspector.tsx](file:///c:/Users/dhanu/SIH7926/frontend/src/components/Inspector/SpillInspector.tsx)
+- Add a **"Strict Authentic AIS Only"** toggle switch in the vessel attribution panel.
+- Add an **"Import Historical AIS Dataset"** button with a modal supporting CSV/GeoJSON drag-and-drop upload.
+- Display clear provenance badges on vessel cards (`AUTHENTIC-MEASURED`, `LIVE-STREAM`, `CSV-IMPORTED`, `CORRIDOR-BENCHMARK`).
+
+---
+
+## Verification Plan
+
+### Automated Tests
+- Create `backend/test_historical_ais_ingestion.py`:
+  - Test batch ping insertion and spatial-temporal queries.
+  - Test CSV parser with sample NOAA and GFW AIS format data.
+  - Test `strict_real_ais_only = True` returning authentic vessels.
+  - Test `strict_real_ais_only = True` returning 0 vessels when bbox is empty.
+  - Run full test suite (`python -m unittest discover`).
+
+### Manual Verification
+1. Upload a sample historical AIS CSV through the UI / API.
+2. Run vessel attribution on a slick with "Strict Authentic AIS Only" enabled.
+3. Verify that only real ships from the CSV/database appear in the ranked suspect list.

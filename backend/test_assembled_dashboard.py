@@ -45,14 +45,14 @@ class TestAssembledDashboardPipeline(unittest.TestCase):
         self.assertEqual(data["provenance_registry"]["detection"], "DETECTED")
         self.assertEqual(data["provenance_registry"]["environmental_currents_wind"], "MEASURED")
         self.assertEqual(data["provenance_registry"]["drift_hindcast_forecast"], "MODEL-PREDICTED")
-        self.assertEqual(data["provenance_registry"]["vessel_anomaly_attribution"], "ANOMALY-FLAGGED")
+        self.assertIn(data["provenance_registry"]["vessel_anomaly_attribution"], ["ANOMALY-FLAGGED", "MEASURED_HISTORICAL_AIS"])
 
         # Check subcomponents
         self.assertEqual(data["spill"]["spill_id"], spill_id)
         self.assertIsNotNone(data["drift"])
         self.assertEqual(data["drift"]["provenance"], "MODEL-PREDICTED")
         self.assertIsNotNone(data["vessels"])
-        self.assertEqual(data["vessels"]["provenance"], "ANOMALY-FLAGGED")
+        self.assertIn(data["vessels"]["provenance"], ["ANOMALY-FLAGGED", "MEASURED_HISTORICAL_AIS"])
         self.assertIn("not constitute legal proof", data["vessels"]["disclaimer"])
         self.assertGreater(len(data["vessels"]["candidate_vessels"]), 0)
 

@@ -29,6 +29,50 @@ REPORTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.pa
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
 
+def normalize_bonn_code(raw_code: Any) -> Tuple[str, str]:
+    """
+    Normalizes arbitrary bonn_code (int, float, string, or None) to a standard
+    Bonn Roman numeral string ('Bonn I' to 'Bonn V') and an associated UI hex color.
+
+    Bonn Agreement Oil Appearance Code (BAOAC):
+    - Code 1: Sheen (0.04 - 0.30 µm) -> Cyan / Blue (#38bdf8)
+    - Code 2: Rainbow (0.30 - 5.00 µm) -> Amber (#fbbf24)
+    - Code 3: Metallic (5.00 - 50.0 µm) -> Orange (#f97316)
+    - Code 4: Discontinuous True Oil (50.0 - 200 µm) -> Red-Orange (#ea580c)
+    - Code 5: Continuous True Oil (> 200 µm) -> Crimson (#ef4444)
+    """
+    if raw_code is None:
+        return "Bonn II", "#fbbf24"
+
+    code_str = str(raw_code).strip().upper()
+
+    # Exact numeric / Roman matches
+    if code_str in ("1", "1.0", "I"):
+        return "Bonn I", "#38bdf8"
+    if code_str in ("2", "2.0", "II"):
+        return "Bonn II", "#fbbf24"
+    if code_str in ("3", "3.0", "III"):
+        return "Bonn III", "#f97316"
+    if code_str in ("4", "4.0", "IV"):
+        return "Bonn IV", "#ea580c"
+    if code_str in ("5", "5.0", "V"):
+        return "Bonn V", "#ef4444"
+
+    # Substring / label matches (check descending order IV, III, II, etc.)
+    if "IV" in code_str or "4" in code_str:
+        return "Bonn IV", "#ea580c"
+    if "III" in code_str or "3" in code_str:
+        return "Bonn III", "#f97316"
+    if "II" in code_str or "2" in code_str:
+        return "Bonn II", "#fbbf24"
+    if "V" in code_str or "5" in code_str:
+        return "Bonn V", "#ef4444"
+    if "I" in code_str or "1" in code_str:
+        return "Bonn I", "#38bdf8"
+
+    return f"Bonn {raw_code}", "#fbbf24"
+
+
 class ReportService:
     """
     Forensic Dossier Orchestration Service.
@@ -76,12 +120,25 @@ class ReportService:
                 "thickness_estimation": db_service.get_thickness_estimate(spill_id) or {}
             }
 
-        # 2. Render static image artifacts
+        # 2. Render static image artifacts with defensive validation guards
         map_png_bytes = render_spill_map_png(spill_data)
         map_b64 = base64.b64encode(map_png_bytes).decode("utf-8")
         
         vessel_data = spill_data.get("vessel_correlation") or {}
-        candidates = vessel_data.get("candidate_vessels") or []
+        if not isinstance(vessel_data, dict):
+            logger.warning(f"Unexpected vessel_correlation type '{type(vessel_data).__name__}' for spill {spill_id}; resetting to empty dict.")
+            vessel_data = {}
+            spill_data["vessel_correlation"] = vessel_data
+        
+        raw_candidates = vessel_data.get("candidate_vessels")
+        if isinstance(raw_candidates, list):
+            candidates = raw_candidates
+        elif raw_candidates is None:
+            candidates = []
+        else:
+            logger.warning(f"Unexpected candidate_vessels type '{type(raw_candidates).__name__}' for spill {spill_id}; expected list. Defaulting to empty.")
+            candidates = []
+
         chart_png_bytes = render_vessel_score_chart_png(candidates)
         chart_b64 = base64.b64encode(chart_png_bytes).decode("utf-8")
         
@@ -89,8 +146,14 @@ class ReportService:
         qr_png_bytes = render_qr_code_png(verify_url)
         qr_b64 = base64.b64encode(qr_png_bytes).decode("utf-8")
 
-        # 3. Fetch evidence ledger records
-        ledger_entries = evidence_service.get_ledger(spill_id)
+        # 3. Fetch evidence ledger records with validation guard
+        raw_ledger = evidence_service.get_ledger(spill_id)
+        if isinstance(raw_ledger, list):
+            ledger_entries = raw_ledger
+        else:
+            logger.warning(f"Unexpected ledger_entries type '{type(raw_ledger).__name__}' for spill {spill_id}; expected list. Defaulting to empty.")
+            ledger_entries = []
+            
         ledger_valid, validation_msg = evidence_service.validate_chain(spill_id)
 
         # 4. Compose HTML
@@ -212,14 +275,41 @@ class ReportService:
         
         # Physical Characterization
         opt_data = spill_data.get("optical_confirmation") or {}
+        if not isinstance(opt_data, dict):
+            opt_data = {}
         thick_data = spill_data.get("thickness_estimation") or {}
+        if not isinstance(thick_data, dict):
+            thick_data = {}
         
-        bonn_code = opt_data.get("bonn_code") or thick_data.get("bonn_code") or "Bonn II"
-        bonn_label = opt_data.get("bonn_label") or thick_data.get("bonn_label") or "Rainbow Sheen (0.3 - 5.0 µm)"
-        bonn_color = "#38bdf8" if "I" in bonn_code else "#fbbf24" if "II" in bonn_code else "#f97316" if "III" in bonn_code else "#ef4444"
+        raw_bonn = opt_data.get("bonn_code") if opt_data.get("bonn_code") is not None else thick_data.get("bonn_code")
+        bonn_code, bonn_color = normalize_bonn_code(raw_bonn)
         
-        min_thick = opt_data.get("min_thickness_um", thick_data.get("min_thickness_um", 0.3))
-        max_thick = opt_data.get("max_thickness_um", thick_data.get("max_thickness_um", 5.0))
+        bonn_label_raw = opt_data.get("bonn_label") or thick_data.get("bonn_label") or "Rainbow Sheen (0.3 - 5.0 µm)"
+        bonn_label = str(bonn_label_raw)
+        
+        # Robust fallback for thickness values to prevent NoneType additions
+        min_thick_val = opt_data.get("min_thickness_um")
+        if min_thick_val is None:
+            min_thick_val = thick_data.get("min_thickness_um")
+        if min_thick_val is None:
+            min_thick_val = 0.3
+
+        max_thick_val = opt_data.get("max_thickness_um")
+        if max_thick_val is None:
+            max_thick_val = thick_data.get("max_thickness_um")
+        if max_thick_val is None:
+            max_thick_val = 5.0
+
+        try:
+            min_thick = float(min_thick_val)
+        except (TypeError, ValueError):
+            min_thick = 0.3
+
+        try:
+            max_thick = float(max_thick_val)
+        except (TypeError, ValueError):
+            max_thick = 5.0
+
         mean_thick = (min_thick + max_thick) / 2.0
         
         # Estimated volume in m3 (Area * thickness)
@@ -231,17 +321,40 @@ class ReportService:
 
         # Drift Simulation
         drift_data = spill_data.get("drift_hindcast") or {}
+        if not isinstance(drift_data, dict):
+            drift_data = {}
         backward = drift_data.get("backward") or {}
-        origin_c = backward.get("origin_centroid") or {}
-        origin_lat = origin_c.get("lat", lat)
-        origin_lon = origin_c.get("lon", lon)
-        duration_hrs = backward.get("duration_hours", 12)
-        wind_speed = backward.get("metocean_summary", {}).get("mean_wind_speed_ms", 5.4)
-        current_speed = backward.get("metocean_summary", {}).get("mean_current_speed_ms", 0.28)
+        if not isinstance(backward, dict):
+            backward = {}
+            
+        origin_c = backward.get("origin_centroid")
+        if isinstance(origin_c, (list, tuple)) and len(origin_c) >= 2:
+            origin_lon = float(origin_c[0])
+            origin_lat = float(origin_c[1])
+        elif isinstance(origin_c, dict):
+            origin_lat = float(origin_c.get("lat", lat))
+            origin_lon = float(origin_c.get("lon", lon))
+        else:
+            origin_lat = float(lat)
+            origin_lon = float(lon)
 
-        # Vessel correlation
+        duration_hrs = backward.get("duration_hours", 12)
+        metocean = backward.get("metocean_summary") or {}
+        wind_speed = metocean.get("mean_wind_speed_ms") or 5.4
+        current_speed = metocean.get("mean_current_speed_ms") or 0.28
+
+        # Vessel correlation with validation guards
         vessel_data = spill_data.get("vessel_correlation") or {}
-        candidates = vessel_data.get("candidate_vessels") or []
+        if not isinstance(vessel_data, dict):
+            vessel_data = {}
+        raw_candidates = vessel_data.get("candidate_vessels")
+        if isinstance(raw_candidates, list):
+            candidates = raw_candidates
+        elif raw_candidates is None:
+            candidates = []
+        else:
+            logger.warning(f"candidate_vessels had unexpected type '{type(raw_candidates).__name__}'; defaulting to empty list.")
+            candidates = []
 
         # Current timestamp
         now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -262,16 +375,42 @@ class ReportService:
         vessel_rows_html = ""
         if candidates:
             for idx, c in enumerate(candidates[:6]):
+                if hasattr(c, "model_dump"):
+                    c = c.model_dump()
+                elif hasattr(c, "dict"):
+                    c = c.dict()
+                elif not isinstance(c, dict):
+                    continue
                 mmsi = c.get("mmsi", "Unknown")
-                name = c.get("name") or f"VESSEL-{mmsi}"
+                name = c.get("name") or c.get("vessel_name") or f"VESSEL-{mmsi}"
                 vtype = c.get("vessel_type") or "Cargo / Tanker"
                 flag = c.get("flag", "International")
-                score = c.get("suspect_score", 0.0)
-                comp = c.get("component_scores") or {}
-                prox_km = c.get("distance_to_origin_km", c.get("min_distance_km", 0.0))
-                time_delta_min = c.get("time_delta_minutes", c.get("time_diff_minutes", 0.0))
+                try:
+                    score = float(c.get("suspect_score") if c.get("suspect_score") is not None else 0.0)
+                except (TypeError, ValueError):
+                    score = 0.0
+
+                prox_val = c.get("distance_to_origin_km")
+                if prox_val is None:
+                    prox_val = c.get("min_distance_km")
+                if prox_val is None and isinstance(c.get("features"), dict):
+                    prox_val = c["features"].get("min_distance_to_origin_km")
+                try:
+                    prox_km = float(prox_val) if prox_val is not None else 0.0
+                except (TypeError, ValueError):
+                    prox_km = 0.0
+
+                time_val = c.get("time_delta_minutes")
+                if time_val is None:
+                    time_val = c.get("time_diff_minutes")
+                if time_val is None and isinstance(c.get("features"), dict):
+                    time_val = c["features"].get("time_near_origin_hours", 0) * 60.0
+                try:
+                    time_delta_min = float(time_val) if time_val is not None else 0.0
+                except (TypeError, ValueError):
+                    time_delta_min = 0.0
+
                 anom_type = c.get("anomaly_type") or "Kinematic Course Deviation"
-                
                 score_color = "#ef4444" if score >= 0.70 else "#f59e0b" if score >= 0.40 else "#10b981"
                 
                 vessel_rows_html += f"""

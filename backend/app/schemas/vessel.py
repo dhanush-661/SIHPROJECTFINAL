@@ -46,6 +46,8 @@ class CandidateVessel(BaseModel):
     track: List[VesselPoint] = Field(..., description="Time-ordered AIS track positions")
     closest_approach_time: str = Field(..., description="Timestamp of closest approach to origin")
     is_ais_dark_suspect: bool = Field(False, description="True if vessel exhibited suspicious AIS transponder disabling")
+    is_authentic_real: bool = Field(False, description="True if vessel track comes from measured live/historical AIS data")
+    data_source: Optional[str] = Field("CORRIDOR_BENCHMARK", description="Source: LIVE_STREAM, HISTORICAL_ARCHIVE, CSV_IMPORT, CORRIDOR_BENCHMARK")
 
 
 class VesselCorrelationRequest(BaseModel):
@@ -55,6 +57,8 @@ class VesselCorrelationRequest(BaseModel):
     weight_temporal: Optional[float] = Field(0.25, description="Weight for temporal correlation component")
     weight_trajectory: Optional[float] = Field(0.20, description="Weight for trajectory deviation/loitering component")
     weight_anomaly: Optional[float] = Field(0.20, description="Weight for IsolationForest ML anomaly component")
+    strict_real_ais_only: Optional[bool] = Field(False, description="If True, disables synthetic corridor models and evaluates ONLY authentic real vessels present in historical database/stream")
+    fetch_online_gfw: Optional[bool] = Field(None, description="Query Global Fishing Watch v3 cloud gateway for authentic vessels in bounding box")
 
 
 class SearchCriteria(BaseModel):
@@ -75,5 +79,9 @@ class VesselCorrelationResponse(BaseModel):
     search_criteria: SearchCriteria
     total_vessels_in_corridor: int
     candidate_vessels_count: int
+    authentic_vessels_count: int = 0
+    is_strict_mode: bool = False
+    gfw_cloud_synced: Optional[bool] = False
+    gfw_vessels_fetched: Optional[int] = 0
     candidate_vessels: List[CandidateVessel]
     scoring_weights: Dict[str, float]

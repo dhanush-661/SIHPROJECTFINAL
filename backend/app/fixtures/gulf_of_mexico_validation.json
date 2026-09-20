@@ -1,0 +1,204 @@
+{
+  "fixture_id": "gulf_of_mexico_validation",
+  "title": "Gulf of Mexico Mississippi Canyon Seep vs Spill",
+  "region": "Gulf of Mexico, USA",
+  "incident_date": "2026-09-04T10:00:00Z",
+  "description": "Deepwater offshore exploration sector validating discrimination between natural hydrocarbon seeps and vessel bilge releases.",
+  "tags": ["Deepwater Hub", "Backscatter Contrast 7.4dB", "Emulsion Thick", "Bonn Code 4"],
+  "assembled_at": "2026-09-04T18:00:00Z",
+  "provenance": "VALIDATION-FIXTURE",
+  "provenance_registry": {
+    "detection": "DETECTED",
+    "environmental_currents_wind": "MEASURED",
+    "drift_hindcast_forecast": "MODEL-PREDICTED",
+    "vessel_anomaly_attribution": "ANOMALY-FLAGGED",
+    "optical_fusion": "MEASURED",
+    "sar_thickness": "MODEL-PREDICTED"
+  },
+  "spill": {
+    "spill_id": "gulf_of_mexico_validation",
+    "detected_at": "2026-09-04T10:00:00Z",
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [-89.280, 28.620],
+          [-89.230, 28.665],
+          [-89.180, 28.690],
+          [-89.170, 28.670],
+          [-89.220, 28.635],
+          [-89.270, 28.605],
+          [-89.280, 28.620]
+        ]
+      ]
+    },
+    "area_km2": 14.80,
+    "perimeter_km": 28.40,
+    "centroid": [-89.225, 28.648],
+    "length_km": 14.20,
+    "width_km": 1.85,
+    "bbox": [-89.280, 28.605, -89.170, 28.690],
+    "orientation_deg": 48.0,
+    "confidence": 0.96,
+    "estimated_age_hours": [8.0, 24.0],
+    "source_image": "S1A_IW_GRDH_1SDV_20260904T100000_GOM_MISSISSIPPI",
+    "provenance": "DETECTED",
+    "wind_speed_ms": 6.4,
+    "wind_direction_deg": 135.0,
+    "aspect_ratio": 7.68,
+    "radar_band": "C-SAR (VV)"
+  },
+  "drift": {
+    "spill_id": "gulf_of_mexico_validation",
+    "simulated_at": "2026-09-04T10:30:00Z",
+    "provenance": "MODEL-PREDICTED",
+    "particle_count": 1000,
+    "backward": {
+      "origin_centroid": [-89.360, 28.540],
+      "estimated_origin_time_window": {
+        "start": "2026-09-03T18:00:00Z",
+        "end": "2026-09-04T04:00:00Z",
+        "most_likely": "2026-09-03T23:00:00Z"
+      },
+      "release_confidence": 0.93,
+      "p50_contour": {
+        "type": "Polygon",
+        "coordinates": [[[-89.380, 28.520], [-89.340, 28.520], [-89.340, 28.560], [-89.380, 28.560], [-89.380, 28.520]]]
+      },
+      "p75_contour": {
+        "type": "Polygon",
+        "coordinates": [[[-89.400, 28.500], [-89.320, 28.500], [-89.320, 28.580], [-89.400, 28.580], [-89.400, 28.500]]]
+      },
+      "p95_contour": {
+        "type": "Polygon",
+        "coordinates": [[[-89.430, 28.470], [-89.290, 28.470], [-89.290, 28.610], [-89.430, 28.610], [-89.430, 28.470]]]
+      }
+    },
+    "forward": {
+      "hours_ahead": 24,
+      "predicted_centroid": [-89.080, 28.760],
+      "shoreline_threat": false,
+      "distance_to_nearest_coast_km": 64.0,
+      "p50_contour": {
+        "type": "Polygon",
+        "coordinates": [[[-89.100, 28.740], [-89.060, 28.740], [-89.060, 28.780], [-89.100, 28.780], [-89.100, 28.740]]]
+      },
+      "p75_contour": {
+        "type": "Polygon",
+        "coordinates": [[[-89.120, 28.720], [-89.040, 28.720], [-89.040, 28.800], [-89.120, 28.800], [-89.120, 28.720]]]
+      },
+      "p95_contour": {
+        "type": "Polygon",
+        "coordinates": [[[-89.150, 28.690], [-89.010, 28.690], [-89.010, 28.830], [-89.150, 28.830], [-89.150, 28.690]]]
+      }
+    },
+    "vector_field": {
+      "ocean_arrows": [
+        {"lon": -89.22, "lat": 28.65, "u_ms": 0.38, "v_ms": 0.32, "speed_ms": 0.50, "direction_deg": 50.0}
+      ],
+      "wind_arrows": [
+        {"lon": -89.22, "lat": 28.65, "u_ms": 4.50, "v_ms": 4.50, "speed_ms": 6.36, "direction_deg": 45.0}
+      ]
+    },
+    "particle_trajectories": []
+  },
+  "vessels": {
+    "spill_id": "gulf_of_mexico_validation",
+    "analyzed_at": "2026-09-04T11:00:00Z",
+    "provenance": "ANOMALY-FLAGGED",
+    "disclaimer": "DISCLAIMER: Suspect rankings are based on kinematic and spatiotemporal anomaly modeling and do not constitute legal proof.",
+    "search_criteria": {
+      "origin_bbox": [-89.45, 28.45, -89.25, 28.65],
+      "time_window_start": "2026-09-03T16:00:00Z",
+      "time_window_end": "2026-09-04T06:00:00Z",
+      "padding_hours": 12.0
+    },
+    "total_vessels_in_corridor": 22,
+    "candidate_vessels_count": 2,
+    "candidate_vessels": [
+      {
+        "mmsi": 367123456,
+        "imo": 9567890,
+        "vessel_name": "GULF PIONEER",
+        "ship_type": "Offshore Supply Vessel",
+        "flag_country": "United States",
+        "length_m": 88.0,
+        "width_m": 18.0,
+        "closest_approach_distance_km": 0.35,
+        "closest_approach_time": "2026-09-03T23:10:00Z",
+        "temporal_proximity_score": 0.95,
+        "spatial_proximity_score": 0.94,
+        "kinematic_anomaly_score": 0.88,
+        "heading_alignment_score": 0.92,
+        "ais_gap_detected": true,
+        "ais_gap_duration_minutes": 55.0,
+        "suspect_score": 0.92,
+        "provenance": "ANOMALY-FLAGGED",
+        "features": {
+          "cpa_distance_km": 0.35,
+          "cpa_time_delta_h": 0.17,
+          "course_slick_alignment_deg": 6.8,
+          "speed_variance_knots": 3.8,
+          "ais_gap_duration_min": 55.0,
+          "loitering_duration_min": 50.0,
+          "isolation_forest_score": -0.55,
+          "heuristic_score": 0.93
+        },
+        "track": [
+          {"lon": -89.400, "lat": 28.500, "sog_knots": 11.2, "cog_deg": 48.0, "timestamp": "2026-09-03T21:30:00Z"},
+          {"lon": -89.360, "lat": 28.540, "sog_knots": 3.4, "cog_deg": 47.0, "timestamp": "2026-09-03T23:10:00Z"},
+          {"lon": -89.280, "lat": 28.600, "sog_knots": 10.8, "cog_deg": 49.0, "timestamp": "2026-09-04T01:00:00Z"}
+        ]
+      }
+    ],
+    "scoring_weights": {
+      "temporal_proximity": 0.25,
+      "spatial_proximity": 0.30,
+      "kinematic_anomaly": 0.25,
+      "heading_alignment": 0.20
+    }
+  },
+  "optical": {
+    "spill_id": "gulf_of_mexico_validation",
+    "analyzed_at": "2026-09-04T11:20:00Z",
+    "optical_confirmed": true,
+    "reason": "Clear MSI band reflectance confirmed thick continuous dark oil core with rainbow fringe",
+    "sentinel2_scene_id": "S2B_MSIL2A_20260904T160000_R012_GOM",
+    "bonn_code": 4,
+    "bonn_label": "Discontinuous True Oil Color (BAOAC 4)",
+    "estimated_thickness_range_um": "50.0 - 200.0 μm",
+    "provenance": "MEASURED",
+    "rgb_composite_available": true,
+    "hue_clusters": [
+      {"cluster_id": 1, "color_hex": "#2B2824", "percentage": 52.0, "description": "Dark brown/black crude core"},
+      {"cluster_id": 2, "color_hex": "#6E5B4B", "percentage": 30.0, "description": "Weathered chocolate mousse emulsion"},
+      {"cluster_id": 3, "color_hex": "#9B8E7D", "percentage": 18.0, "description": "Metallic rainbow periphery"}
+    ]
+  },
+  "sar_thickness": {
+    "spill_id": "gulf_of_mexico_validation",
+    "analyzed_at": "2026-09-04T11:25:00Z",
+    "classification": "thick_emulsion",
+    "confidence": 0.95,
+    "backscatter_contrast_db": 7.42,
+    "fragmentation_index": 0.35,
+    "cross_validated_with_optical": true,
+    "provenance": "MODEL-PREDICTED",
+    "details": "High backscatter contrast (7.42 dB) with low fragmentation index indicates dense, thick emulsion core matching Bonn Code 4",
+    "glcm_features": {
+      "contrast": 0.48,
+      "homogeneity": 0.72,
+      "energy": 0.38,
+      "entropy": 1.45,
+      "correlation": 0.68,
+      "dissimilarity": 0.41
+    }
+  },
+  "stats": {
+    "area_km2": 14.80,
+    "top_suspect": "GULF PIONEER",
+    "top_score": 0.92,
+    "thickness_class": "thick_emulsion",
+    "bonn_code": 4
+  }
+}

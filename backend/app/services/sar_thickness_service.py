@@ -70,13 +70,12 @@ ENTROPY_HIGH_THRESHOLD          = 3.2   # > 3.2 bits → heterogeneous / thick
 FRAGMENTATION_THIN_MAX          = 0.35  # < 0.35 → compact polygon
 FRAGMENTATION_THICK_MIN         = 0.55  # > 0.55 → fragmented polygon
 
+from app.services.gee_auth import gee_auth_service
+
 
 class SARThicknessService:
     """
-    SAR-Based Oil Thickness Classification Service.
-
-    Derives sigma-0 raster statistics, computes GLCM texture features, and
-    applies a physically-grounded rule-based classifier to label each spill
+    Classifies oil-spill layer thickness across the detected Sentinel-1 SAR
     polygon as thin_sheen, intermediate, or thick_emulsion.
 
     When a Phase 5 optical confirmation exists, cross-checks the Bonn Agreement
@@ -84,22 +83,7 @@ class SARThicknessService:
     """
 
     def __init__(self):
-        self._ee_initialized = False
-        self._try_init_gee()
-
-    def _try_init_gee(self):
-        if not EE_AVAILABLE:
-            return
-        try:
-            ee_project = os.getenv("EE_PROJECT_ID")
-            if ee_project:
-                ee.Initialize(project=ee_project)
-            else:
-                ee.Initialize()
-            self._ee_initialized = True
-            logger.info(f"SAR Thickness Service: GEE initialized (Project: {ee_project or 'default'}).")
-        except Exception as exc:
-            logger.info(f"SAR Thickness Service: GEE not authenticated ({exc}). Using high-fidelity simulator.")
+        self._ee_initialized = gee_auth_service.initialized
 
     # ──────────────────────────────────────────────────────────────────────
     # Public API

@@ -6,11 +6,14 @@ import {
   Activity, 
   Anchor, 
   ChevronRight,
-  Wifi
+  Wifi,
+  FlaskConical,
+  Satellite,
+  ShieldCheck
 } from 'lucide-react';
 import { LiveFeedsModal } from '../Common/LiveFeedsModal';
 
-export type AppPage = 'detection-fusion' | 'drift-hindcast' | 'attribution' | 'telemetry-evidence';
+export type AppPage = 'detection-fusion' | 'drift-hindcast' | 'attribution' | 'telemetry-evidence' | 'validation' | 'testing';
 
 interface SidebarProps {
   activePage: AppPage;
@@ -18,6 +21,7 @@ interface SidebarProps {
   isLiveAISActive: boolean;
   onToggleLiveAIS: () => void;
   liveVesselCount: number;
+  onOpenMonitors?: () => void;
 }
 
 const NAV_ITEMS: { 
@@ -50,6 +54,12 @@ const NAV_ITEMS: {
     sublabel: 'Overview & Chain Ledger',
     icon: Activity,
   },
+  {
+    id: 'validation',
+    label: 'Incident Validation',
+    sublabel: 'Ground Truth Benchmark',
+    icon: ShieldCheck,
+  },
 ];
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -58,6 +68,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isLiveAISActive,
   onToggleLiveAIS,
   liveVesselCount,
+  onOpenMonitors,
 }) => {
   const [isLiveModalOpen, setIsLiveModalOpen] = useState<boolean>(false);
 
@@ -289,6 +300,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           </div>
 
+          {/* AOI Live Monitors Trigger */}
+          {onOpenMonitors && (
+            <button
+              onClick={onOpenMonitors}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                width: '100%',
+                padding: '6px',
+                borderRadius: '6px',
+                backgroundColor: '#F0F9FF',
+                border: '1px solid #BAE6FD',
+                color: '#0284C7',
+                fontSize: '0.70rem',
+                fontWeight: 700,
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              <Satellite size={13} color="#0284C7" />
+              <span>Sentinel-1 AOI Monitors</span>
+            </button>
+          )}
+
           {/* Remote API Hub Trigger */}
           <button
             onClick={() => setIsLiveModalOpen(true)}
@@ -310,6 +347,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             <Wifi size={13} color="var(--navy-primary)" />
             <span>Live Feeds &amp; Remote Hub</span>
+          </button>
+
+          {/* Dedicated Developer / Test Mode Button */}
+          <button
+            onClick={() => onSelectPage('testing')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              width: '100%',
+              padding: '6px',
+              borderRadius: '6px',
+              backgroundColor: activePage === 'testing' ? '#FEF3C7' : '#FFFBEB',
+              border: activePage === 'testing' ? '1.5px solid #D97706' : '1px dashed #F59E0B',
+              color: '#92400E',
+              fontSize: '0.70rem',
+              fontWeight: 800,
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#FDE68A')}
+            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = activePage === 'testing' ? '#FEF3C7' : '#FFFBEB')}
+          >
+            <FlaskConical size={13} color="#D97706" />
+            <span>Developer / Test Mode</span>
           </button>
 
           {/* Footer build meta */}

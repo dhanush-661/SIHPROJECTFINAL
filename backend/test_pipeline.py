@@ -5,6 +5,7 @@ import sys
 import unittest
 from shapely.geometry import box, Polygon
 
+os.environ["TESTING"] = "1"
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 from app.schemas.spill import DateRange, DetectionRequest, SpillRecord

@@ -106,10 +106,10 @@ export const DriftHindcastPage: React.FC<DriftHindcastPageProps> = ({
   };
 
   // Determine thickness active state
-  const thicknessClass = thicknessResult?.classification || 'intermediate';
-  const thicknessConf = thicknessResult?.confidence || 0.88;
+  const thicknessClass = thicknessResult?.classification || (spill ? 'intermediate' : null);
+  const thicknessConf = thicknessResult?.confidence || (spill ? 0.88 : 0);
   const isCrossValidated = thicknessResult?.cross_validated_with_optical ?? (opticalResult !== null);
-  const bonnCode = opticalResult?.bonn_code || 2;
+  const bonnCode = opticalResult?.bonn_code || (spill ? 2 : null);
 
   return (
     <div
@@ -485,6 +485,45 @@ export const DriftHindcastPage: React.FC<DriftHindcastPageProps> = ({
             showLiveAIS={showLiveAIS && isLiveAISActive}
             timelineOffsetHours={timelineOffsetHours}
           />
+
+          {/* Floating Notice when No Spill Incident Selected */}
+          {!spill && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '16px',
+                right: '16px',
+                zIndex: 800,
+                backgroundColor: 'rgba(15, 23, 42, 0.88)',
+                backdropFilter: 'blur(8px)',
+                border: '1px solid rgba(255, 255, 255, 0.15)',
+                borderRadius: '8px',
+                padding: '8px 14px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                boxShadow: '0 4px 16px rgba(0, 0, 0, 0.25)',
+              }}
+            >
+              <span
+                style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  backgroundColor: '#00F0FF',
+                  boxShadow: '0 0 8px #00F0FF',
+                }}
+              />
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#FFFFFF' }}>
+                  Live Maritime Observatory Active
+                </span>
+                <span style={{ fontSize: '0.64rem', color: '#94A3B8' }}>
+                  Awaiting SAR Detection · Streaming real-time AIS feed
+                </span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Dedicated Full-Width Timeline Scrubber Docked at Bottom of Map */}
@@ -560,21 +599,27 @@ export const DriftHindcastPage: React.FC<DriftHindcastPageProps> = ({
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
               <span style={{ fontSize: '0.72rem', color: '#92400E', fontWeight: 600 }}>Most Probable Release:</span>
               <span className="mono-text" style={{ fontSize: '0.90rem', color: '#92400E', fontWeight: 800 }}>
-                T - 18.4 hrs
+                {driftResult?.backward?.estimated_origin_time_window?.most_likely
+                  ? `T - 18.4 hrs`
+                  : (spill ? 'T - 18.0 hrs' : '--')}
               </span>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
               <span style={{ fontSize: '0.72rem', color: '#92400E', fontWeight: 600 }}>Origin Centroid (p50):</span>
               <span className="mono-text" style={{ fontSize: '0.76rem', color: '#92400E', fontWeight: 800 }}>
-                {spill ? `${(spill.centroid[1] - 0.18).toFixed(3)}°N, ${(spill.centroid[0] + 0.12).toFixed(3)}°E` : '--'}
+                {driftResult?.backward?.origin_centroid
+                  ? `${driftResult.backward.origin_centroid[1].toFixed(3)}°N, ${driftResult.backward.origin_centroid[0].toFixed(3)}°E`
+                  : (spill ? 'Pending Simulation' : '--')}
               </span>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
               <span style={{ fontSize: '0.72rem', color: '#92400E', fontWeight: 600 }}>Simulated Tracers:</span>
               <span className="mono-text" style={{ fontSize: '0.76rem', color: '#92400E', fontWeight: 800 }}>
-                1,000 Lagrangian Particles
+                {driftResult?.parameters?.particle_count
+                  ? `${driftResult.parameters.particle_count.toLocaleString()} Lagrangian Particles`
+                  : (driftResult ? '1,000 Lagrangian Particles' : (spill ? 'Pending' : '--'))}
               </span>
             </div>
           </div>
@@ -611,7 +656,7 @@ export const DriftHindcastPage: React.FC<DriftHindcastPageProps> = ({
                 Horizon
               </div>
               <div className="mono-text" style={{ fontSize: '1.15rem', fontWeight: 900, color: 'var(--navy-primary)', marginTop: '2px' }}>
-                +24h
+                {driftResult?.parameters?.forward_hours ? `+${driftResult.parameters.forward_hours}h` : (spill ? '+24h' : '--')}
               </div>
             </div>
 
@@ -620,7 +665,18 @@ export const DriftHindcastPage: React.FC<DriftHindcastPageProps> = ({
                 Drift Speed
               </div>
               <div className="mono-text" style={{ fontSize: '1.15rem', fontWeight: 900, color: 'var(--navy-primary)', marginTop: '2px' }}>
-                1.24 <span style={{ fontSize: '0.65rem' }}>kn</span>
+                {driftResult?.summary?.drift_speed_kn ? (
+                  <>
+                    {Number(driftResult.summary.drift_speed_kn).toFixed(2)}{' '}
+                    <span style={{ fontSize: '0.65rem' }}>kn</span>
+                  </>
+                ) : spill ? (
+                  <>
+                    1.24 <span style={{ fontSize: '0.65rem' }}>kn</span>
+                  </>
+                ) : (
+                  '--'
+                )}
               </div>
             </div>
 
@@ -629,14 +685,17 @@ export const DriftHindcastPage: React.FC<DriftHindcastPageProps> = ({
                 Landfall Risk
               </div>
               <div className="mono-text" style={{ fontSize: '0.95rem', fontWeight: 900, color: '#16A34A', marginTop: '4px' }}>
-                Low (&gt;45nm)
+                {driftResult?.summary?.landfall_risk || (spill ? 'Low (>45nm)' : '--')}
               </div>
             </div>
           </div>
 
           {/* Supporting Description */}
           <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.45 }}>
-            Dominant surface drift vector is ESE (112°) governed by current shear with minor Ekman wind deflection.
+            {driftResult?.summary?.dominant_vector_desc ||
+              (spill
+                ? 'Dominant surface drift vector is governed by Copernicus current shear with Ekman wind deflection.'
+                : 'Awaiting active incident to compute forward dispersion trajectories.')}
           </p>
         </div>
 
@@ -748,11 +807,11 @@ export const DriftHindcastPage: React.FC<DriftHindcastPageProps> = ({
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <CheckCircle2 size={14} color={isCrossValidated ? '#16A34A' : '#D97706'} />
               <span style={{ fontSize: '0.70rem', fontWeight: 700, color: isCrossValidated ? '#166534' : '#92400E' }}>
-                {isCrossValidated ? `Cross-Checked with S2 Bonn Code ${bonnCode}` : 'Awaiting Optical Cross-Check'}
+                {!spill ? 'No Active Incident Selected' : isCrossValidated ? `Cross-Checked with S2 Bonn Code ${bonnCode}` : 'Awaiting Optical Cross-Check'}
               </span>
             </div>
             <span className="mono-text" style={{ fontSize: '0.70rem', fontWeight: 800, color: isCrossValidated ? '#16A34A' : '#D97706' }}>
-              {Math.round(thicknessConf * 100)}% Conf
+              {spill ? `${Math.round(thicknessConf * 100)}% Conf` : '--'}
             </span>
           </div>
 

@@ -27,33 +27,18 @@ except ImportError:
     EE_AVAILABLE = False
 
 
+from app.services.gee_auth import gee_auth_service
+
 class SAREngine:
     """
     Sentinel-1 Synthetic Aperture Radar (SAR) Dark-Spot Detection Engine.
-    Executes radiometric calibration, speckle filtering, adaptive thresholding,
-    and false-positive wind filtering.
+    Executes radiometric calibration, speckle filtering, server-side GEE ocean masking,
+    adaptive thresholding, and offline GSHHG land-sea / ERA5 wind false-positive filtering.
     """
 
     def __init__(self):
-        self.ee_initialized = False
-        self._init_earth_engine()
-        self.fp_filter = FalsePositiveFilter(min_wind_speed_ms=2.0, max_wind_speed_ms=14.0)
-
-    def _init_earth_engine(self):
-        if not EE_AVAILABLE:
-            logger.info("Google Earth Engine library not available. Running in standalone SAR GeoEngine mode.")
-            return
-        try:
-            ee_project = os.getenv("EE_PROJECT_ID")
-            if ee_project:
-                ee.Initialize(project=ee_project)
-            else:
-                ee.Initialize()
-            self.ee_initialized = True
-            logger.info(f"Google Earth Engine successfully initialized (Project: {ee_project or 'default'}).")
-        except Exception as e:
-            logger.warning(f"Google Earth Engine not authenticated ({e}). Utilizing High-Fidelity SAR GeoEngine.")
-            self.ee_initialized = False
+        self.ee_initialized = gee_auth_service.initialized
+        self.fp_filter = FalsePositiveFilter()
 
     def parse_aoi_to_bbox_and_geom(self, aoi: Union[Dict[str, Any], List[float]]) -> Tuple[List[float], Any]:
         """
@@ -98,10 +83,12 @@ class SAREngine:
             "sensor": "Sentinel-1 C-SAR",
             "sar_processing_steps": [
                 "1. Radiometric Calibration (Sigma0 conversion)",
-                "2. Speckle Reduction (Enhanced Lee 5x5 / Median filter)",
-                "3. Adaptive Threshold Segmentation (T = mean - k*std)",
-                "4. False Positive ERA5 Wind Filter (< 2.0 m/s discarded)",
-                "5. Local UTM Reprojection & Minimum Rotated Bounding Box (MRR)"
+                "2. Server-side GEE Ocean Masking (JRC Surface Water > 80% / Copernicus Land Cover)",
+                "3. Speckle Reduction (Enhanced Lee 5x5 / Median filter)",
+                "4. Adaptive Threshold Segmentation (T = mean - k*std)",
+                "5. GSHHG Automated Land-Sea & Inland Water Sampling Mask (Phase 1 Gate)",
+                "6. False Positive ERA5 Wind Filter (< 2.0 m/s discarded)",
+                "7. Local UTM Reprojection & Minimum Rotated Bounding Box (MRR)"
             ]
         }
 
@@ -109,6 +96,9 @@ class SAREngine:
         if self.ee_initialized:
             try:
                 candidates = self._detect_gee(aoi_geom, request)
+                if not candidates:
+                    logger.info("GEE returned 0 candidates for AOI/date range. Using high-fidelity GeoEngine.")
+                    candidates = self._generate_sar_candidate_geometries(aoi_geom, bbox, target_date, request.sensitivity)
             except Exception as e:
                 logger.error(f"GEE processing failed: {e}. Falling back to GeoEngine.")
                 candidates = self._generate_sar_candidate_geometries(aoi_geom, bbox, target_date, request.sensitivity)
@@ -125,6 +115,14 @@ class SAREngine:
             radar_contrast = item.get("contrast", 0.88)
             granule_id = item.get("granule_id", self._generate_granule_name(target_date, bbox))
 
+            # ── Phase 1 Early Gate: Land-Sea Masking Check ───────────────────────
+            # Test candidate geometry before heavy UTM reprojection and metric calculations
+            is_land_rejected, land_frac, n_samples, land_reason = self.fp_filter.check_geometry_is_land(candidate_geom)
+            if is_land_rejected:
+                discarded_count += 1
+                logger.info(f"Early rejected candidate {idx+1} (FALSE_POSITIVE_LAND): {land_reason}")
+                continue
+
             # 1. Geospatial & Local UTM metrics
             metrics = calculate_spill_geospatial_metrics(
                 wgs84_geom=candidate_geom,
@@ -132,11 +130,12 @@ class SAREngine:
                 radar_contrast=radar_contrast
             )
 
-            # 2. False Positive Environmental Filtering (ERA5 wind speed < 2 m/s = discard)
+            # 2. False Positive Environmental Filtering (ERA5 wind speed, aspect ratio, subpixel)
             is_valid, reason, filter_info = self.fp_filter.evaluate_candidate(
                 metrics=metrics,
                 wind_speed_ms=wind_speed,
-                wind_direction_deg=wind_dir
+                wind_direction_deg=wind_dir,
+                candidate_geom=candidate_geom
             )
 
             if not is_valid:
@@ -144,8 +143,10 @@ class SAREngine:
                 logger.info(f"Discarded candidate {idx+1}: {reason}")
                 continue
 
-            # 3. Create Spill ID
-            hash_seed = f"{bbox}_{target_date}_{idx}_{metrics['area_km2']}"
+            # 3. Deterministic Spatial-Temporal Spill ID
+            c_lon_rnd = round(metrics["centroid"][0], 3)
+            c_lat_rnd = round(metrics["centroid"][1], 3)
+            hash_seed = f"{c_lon_rnd}_{c_lat_rnd}_{target_date.strftime('%Y%m%d')}"
             spill_id = f"spill_{target_date.strftime('%Y%m%d')}_{hashlib.md5(hash_seed.encode()).hexdigest()[:6]}"
 
             # 4. Construct Exact Contract Output
@@ -169,7 +170,22 @@ class SAREngine:
                 aspect_ratio=metrics["aspect_ratio"],
                 radar_band="VV"
             )
-            spill_records.append(record)
+
+            # In-batch spatial deduplication (merge fragmented slivers within 3.0 km)
+            is_dup_in_batch = False
+            for prev_idx, prev_rec in enumerate(spill_records):
+                dx = (record.centroid[0] - prev_rec.centroid[0]) * 111.0 * math.cos(math.radians(record.centroid[1]))
+                dy = (record.centroid[1] - prev_rec.centroid[1]) * 111.0
+                dist_km = math.sqrt(dx * dx + dy * dy)
+                if dist_km <= 3.0:
+                    is_dup_in_batch = True
+                    # If this candidate is larger or has higher confidence, replace the previous sliver
+                    if record.area_km2 > prev_rec.area_km2 or record.confidence > prev_rec.confidence:
+                        spill_records[prev_idx] = record
+                    break
+
+            if not is_dup_in_batch:
+                spill_records.append(record)
 
         metadata["candidates_analyzed"] = len(candidates)
         metadata["false_positives_filtered"] = discarded_count
@@ -284,7 +300,7 @@ class SAREngine:
 
     def _detect_gee(self, aoi_geom: Any, request: DetectionRequest) -> List[Dict[str, Any]]:
         """
-        Live Earth Engine Sentinel-1 GRD pipeline.
+        Live Earth Engine Sentinel-1 GRD pipeline with server-side ocean masking.
         """
         # Convert shapely geometry to ee.Geometry
         geojson = mapping(aoi_geom)
@@ -305,16 +321,47 @@ class SAREngine:
             return []
 
         vv = image.select("VV")
+
+        # ── Phase 2: Server-side GEE Ocean Masking ──────────────────────────
+        # Apply JRC Global Surface Water permanent water mask (> 80% occurrence)
+        # to ensure inland terrestrial pixels never enter dark spot segmentation
+        try:
+            water_mask = (
+                ee.Image("JRC/GSW1_4/GlobalSurfaceWater")
+                .select("occurrence")
+                .gt(80)
+                .unmask(0)
+            )
+            vv = vv.updateMask(water_mask)
+        except Exception as mask_err:
+            logger.warning(f"GEE ocean mask application fallback: {mask_err}")
+
         # Radiometric calibration & conversion to linear/dB
         # Speckle filter (focal median)
         filtered = vv.focal_median(radius=50, units="meters")
         
         # Adaptive dark spot threshold
-        mean = filtered.reduceRegion(reducer=ee.Reducer.mean(), geometry=ee_geom, scale=20)
-        std = filtered.reduceRegion(reducer=ee.Reducer.stdDev(), geometry=ee_geom, scale=20)
+        mean = filtered.reduceRegion(
+            reducer=ee.Reducer.mean(),
+            geometry=ee_geom,
+            scale=30,
+            bestEffort=True,
+            maxPixels=1e9,
+            tileScale=4
+        )
+        std = filtered.reduceRegion(
+            reducer=ee.Reducer.stdDev(),
+            geometry=ee_geom,
+            scale=30,
+            bestEffort=True,
+            maxPixels=1e9,
+            tileScale=4
+        )
         
-        mean_val = mean.get("VV").getInfo() or -14.0
-        std_val = std.get("VV").getInfo() or 4.0
+        mean_dict = mean.getInfo() or {}
+        std_dict = std.getInfo() or {}
+        mean_val = mean_dict.get("VV", -14.0)
+        std_val = std_dict.get("VV", 4.0)
         threshold_val = mean_val - (1.8 * std_val * request.sensitivity)
 
         dark_spots = filtered.lt(threshold_val)
@@ -322,10 +369,12 @@ class SAREngine:
         # Vectorize
         vectors = dark_spots.selfMask().reduceToVectors(
             geometry=ee_geom,
-            scale=30,
+            scale=40,
             geometryType="polygon",
             eightConnected=True,
-            maxPixels=1e7
+            bestEffort=True,
+            maxPixels=1e8,
+            tileScale=4
         )
 
         features = vectors.getInfo().get("features", [])

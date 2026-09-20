@@ -62,10 +62,10 @@ def render_spill_map_png(spill_data: Dict[str, Any], width_in: float = 7.2, heig
     # Spill Centroid
     centroid = spill_rec.get("centroid")
     if isinstance(centroid, (list, tuple)) and len(centroid) >= 2:
-        sc_lon, sc_lat = centroid[0], centroid[1]
+        sc_lon, sc_lat = float(centroid[0]), float(centroid[1])
     elif isinstance(centroid, dict):
-        sc_lon = centroid.get("lon", 80.25)
-        sc_lat = centroid.get("lat", 13.08)
+        sc_lon = float(centroid.get("lon", 80.25))
+        sc_lat = float(centroid.get("lat", 13.08))
     else:
         sc_lon = poly_lons[0] if coords else 80.25
         sc_lat = poly_lats[0] if coords else 13.08
@@ -79,7 +79,7 @@ def render_spill_map_png(spill_data: Dict[str, Any], width_in: float = 7.2, heig
     
     # Helper to plot GeoJSON polygon / MultiPolygon contour
     def plot_contour(contour_geom, fill_color, edge_color, alpha_val, label_text, z_order):
-        if not contour_geom:
+        if not contour_geom or not isinstance(contour_geom, dict):
             return
         c_type = contour_geom.get("type")
         c_coords = contour_geom.get("coordinates", [])
@@ -100,15 +100,21 @@ def render_spill_map_png(spill_data: Dict[str, Any], width_in: float = 7.2, heig
                 ax.fill(p_lons, p_lats, color=fill_color, alpha=alpha_val, zorder=z_order, label=lbl)
                 ax.plot(p_lons, p_lats, color=edge_color, linestyle='--', linewidth=1.2, zorder=z_order+0.1)
 
-    prob_contours = backward.get("probability_contours") or {}
-    p95 = prob_contours.get("p95") or backward.get("p95_contour")
-    p75 = prob_contours.get("p75") or backward.get("p75_contour")
-    p50 = prob_contours.get("p50") or backward.get("p50_contour")
+    prob_contours = backward.get("probability_contours") if isinstance(backward, dict) else {}
+    prob_contours = prob_contours or {}
+    p95 = prob_contours.get("p95") or (backward.get("p95_contour") if isinstance(backward, dict) else None)
+    p75 = prob_contours.get("p75") or (backward.get("p75_contour") if isinstance(backward, dict) else None)
+    p50 = prob_contours.get("p50") or (backward.get("p50_contour") if isinstance(backward, dict) else None)
     
     # Fallback to circular/elliptical bands if geometry not explicit
-    origin_c = backward.get("origin_centroid") or {}
-    oc_lon = origin_c.get("lon")
-    oc_lat = origin_c.get("lat")
+    origin_c = backward.get("origin_centroid") if isinstance(backward, dict) else None
+    if isinstance(origin_c, (list, tuple)) and len(origin_c) >= 2:
+        oc_lon, oc_lat = float(origin_c[0]), float(origin_c[1])
+    elif isinstance(origin_c, dict):
+        oc_lon = float(origin_c.get("lon")) if origin_c.get("lon") is not None else None
+        oc_lat = float(origin_c.get("lat")) if origin_c.get("lat") is not None else None
+    else:
+        oc_lon, oc_lat = None, None
     
     if p95:
         plot_contour(p95, '#38bdf8', '#0284c7', 0.15, 'Origin 95% Confidence Band', 2)
@@ -128,21 +134,43 @@ def render_spill_map_png(spill_data: Dict[str, Any], width_in: float = 7.2, heig
 
     # 3. Parse Vessel Tracks
     vessel_data = spill_data.get("vessel_correlation") or {}
-    candidates = vessel_data.get("candidate_vessels") or []
+    candidates = vessel_data.get("candidate_vessels") or [] if isinstance(vessel_data, dict) else []
     track_colors = ['#f59e0b', '#10b981', '#a855f7', '#ec4899', '#6366f1']
     
     top_candidates = candidates[:4]
     for idx, v in enumerate(top_candidates):
+        if hasattr(v, "model_dump"):
+            v = v.model_dump()
+        elif hasattr(v, "dict"):
+            v = v.dict()
+        elif not isinstance(v, dict):
+            continue
         color = track_colors[idx % len(track_colors)]
         mmsi = v.get("mmsi", "Unknown")
-        name = v.get("name") or f"MMSI {mmsi}"
-        score = v.get("suspect_score", 0.0)
+        name = v.get("vessel_name") or v.get("name") or f"MMSI {mmsi}"
+        score = float(v.get("suspect_score", 0.0))
         
         # Track line
         track_points = v.get("track") or v.get("trajectory") or []
+        t_lons = []
+        t_lats = []
         if track_points:
-            t_lons = [p.get("lon", p.get("longitude", 0)) for p in track_points if "lon" in p or "longitude" in p]
-            t_lats = [p.get("lat", p.get("latitude", 0)) for p in track_points if "lat" in p or "latitude" in p]
+            for p in track_points:
+                if hasattr(p, "model_dump"):
+                    p = p.model_dump()
+                elif hasattr(p, "dict"):
+                    p = p.dict()
+                if isinstance(p, (list, tuple)) and len(p) >= 2:
+                    t_lons.append(float(p[0]))
+                    t_lats.append(float(p[1]))
+                elif isinstance(p, dict):
+                    if "lon" in p or "longitude" in p:
+                        t_lons.append(float(p.get("lon", p.get("longitude", 0))))
+                    if "lat" in p or "latitude" in p:
+                        t_lats.append(float(p.get("lat", p.get("latitude", 0))))
+                elif hasattr(p, "lon") and hasattr(p, "lat"):
+                    t_lons.append(float(p.lon))
+                    t_lats.append(float(p.lat))
             if t_lons and t_lats:
                 all_lons.extend(t_lons)
                 all_lats.extend(t_lats)
@@ -203,6 +231,11 @@ def render_vessel_score_chart_png(candidate_vessels: List[Dict[str, Any]], width
     fig.patch.set_facecolor('#0f172a')  # Slate 900
     ax.set_facecolor('#1e293b')        # Slate 800
     
+    # Type guard: ensure candidate_vessels is a list
+    if not isinstance(candidate_vessels, list):
+        logger.warning(f"render_vessel_score_chart_png expected list for candidate_vessels, got {type(candidate_vessels).__name__}. Falling back to empty list.")
+        candidate_vessels = []
+
     # Filter top 5 vessels
     top_vessels = candidate_vessels[:5]
     if not top_vessels:
@@ -231,13 +264,25 @@ def render_vessel_score_chart_png(candidate_vessels: List[Dict[str, Any]], width
     total_scores = []
     
     for v in vessels:
+        if hasattr(v, "model_dump"):
+            v = v.model_dump()
+        elif hasattr(v, "dict"):
+            v = v.dict()
+        elif not isinstance(v, dict):
+            continue
         mmsi = v.get("mmsi", "Unknown")
-        name = v.get("name") or f"MMSI {mmsi}"
+        name = v.get("vessel_name") or v.get("name") or f"MMSI {mmsi}"
         rank = v.get("rank", "")
         rank_str = f"#{rank} " if rank else ""
         labels.append(f"{rank_str}{name}\n({mmsi})")
         
         c = v.get("component_scores") or {}
+        if hasattr(c, "model_dump"):
+            c = c.model_dump()
+        elif hasattr(c, "dict"):
+            c = c.dict()
+        elif not isinstance(c, dict):
+            c = {}
         # Component contributions scaled by model weights:
         # Suspect Score = 0.35 * Proximity + 0.25 * Temporal + 0.20 * Trajectory + 0.20 * ML Anomaly
         p = float(c.get("proximity_score", 0.0)) * 0.35

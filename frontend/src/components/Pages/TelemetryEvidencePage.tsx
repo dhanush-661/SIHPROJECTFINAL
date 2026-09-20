@@ -49,38 +49,7 @@ export const TelemetryEvidencePage: React.FC<TelemetryEvidencePageProps> = ({
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
 
   // Dynamic / Hydrated Ledger entries
-  const [ledgerEntries, setLedgerEntries] = useState<LedgerDisplayItem[]>([
-    {
-      stage: '1. Sentinel-1 SAR Segmentation',
-      timestamp: spill?.detected_at || '2026-09-02T04:12:00Z',
-      hash: 'sha256:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069',
-      verified: true,
-    },
-    {
-      stage: '2. OpenDrift Hindcast Simulation',
-      timestamp: '2026-09-02T05:30:15Z',
-      hash: 'sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
-      verified: true,
-    },
-    {
-      stage: '3. GFW AIS Kinematics & IsolationForest',
-      timestamp: '2026-09-02T06:14:40Z',
-      hash: 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-      verified: true,
-    },
-    {
-      stage: '4. Sentinel-2 Optical Bonn Classification',
-      timestamp: '2026-09-02T07:22:10Z',
-      hash: 'sha256:5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8',
-      verified: opticalResult !== null,
-    },
-    {
-      stage: '5. SAR Texture & Thickness Estimation',
-      timestamp: '2026-09-02T08:05:00Z',
-      hash: 'sha256:4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a',
-      verified: thicknessResult !== null,
-    },
-  ]);
+  const [ledgerEntries, setLedgerEntries] = useState<LedgerDisplayItem[]>([]);
 
   useEffect(() => {
     if (spill?.spill_id) {
@@ -94,11 +63,16 @@ export const TelemetryEvidencePage: React.FC<TelemetryEvidencePageProps> = ({
               verified: e.is_valid !== false,
             }));
             setLedgerEntries(mapped);
+          } else {
+            setLedgerEntries([]);
           }
         })
         .catch((err) => {
-          console.warn('Could not load remote evidence ledger, using cached local states:', err);
+          console.warn('Could not load remote evidence ledger:', err);
+          setLedgerEntries([]);
         });
+    } else {
+      setLedgerEntries([]);
     }
   }, [spill?.spill_id]);
 
@@ -228,13 +202,13 @@ export const TelemetryEvidencePage: React.FC<TelemetryEvidencePageProps> = ({
             <span style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
               Selected Slick Area
             </span>
-            <ProvenanceBadge type="DETECTED" />
+            <ProvenanceBadge type={spill ? "DETECTED" : "UNVERIFIED"} />
           </div>
           <div className="mono-text" style={{ fontSize: '1.4rem', fontWeight: 900, color: 'var(--navy-primary)' }}>
-            {spill?.area_km2 ? spill.area_km2.toFixed(2) : '14.80'} <span style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-secondary)' }}>km²</span>
+            {spill?.area_km2 ? spill.area_km2.toFixed(2) : '--'} <span style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-secondary)' }}>km²</span>
           </div>
-          <div style={{ fontSize: '0.66rem', color: '#16A34A', fontWeight: 700, marginTop: '2px' }}>
-            {spill ? `${Math.round(spill.confidence * 100)}% detection confidence` : '96% confidence'}
+          <div style={{ fontSize: '0.66rem', color: spill ? '#16A34A' : 'var(--text-muted)', fontWeight: 700, marginTop: '2px' }}>
+            {spill ? `${Math.round(spill.confidence * 100)}% detection confidence` : 'No active incident'}
           </div>
         </div>
 
@@ -244,13 +218,17 @@ export const TelemetryEvidencePage: React.FC<TelemetryEvidencePageProps> = ({
             <span style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
               Bonn / Thickness
             </span>
-            <ProvenanceBadge type="MEASURED" />
+            <ProvenanceBadge type={opticalResult || thicknessResult ? "MEASURED" : "UNVERIFIED"} />
           </div>
-          <div className="mono-text" style={{ fontSize: '1.2rem', fontWeight: 900, color: '#0D9488' }}>
-            Code {opticalResult?.bonn_code || 2} · {thicknessResult?.classification ? thicknessResult.classification.replace('_', ' ') : 'Rainbow Sheen'}
+          <div className="mono-text" style={{ fontSize: '1.1rem', fontWeight: 900, color: '#0D9488' }}>
+            {opticalResult?.bonn_code
+              ? `Code ${opticalResult.bonn_code} · ${thicknessResult?.classification ? thicknessResult.classification.replace('_', ' ') : 'Rainbow'}`
+              : thicknessResult?.classification
+              ? thicknessResult.classification.replace('_', ' ')
+              : (spill ? 'Awaiting Sensor Pass' : '--')}
           </div>
           <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-            Estimated 0.3 - 5.0 µm thickness
+            {spill ? 'Spectral & Texture Profiling' : '--'}
           </div>
         </div>
 
@@ -260,13 +238,13 @@ export const TelemetryEvidencePage: React.FC<TelemetryEvidencePageProps> = ({
             <span style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
               Last Sensor Pass
             </span>
-            <ProvenanceBadge type="VERIFIED" />
+            <ProvenanceBadge type={spill ? "VERIFIED" : "UNVERIFIED"} />
           </div>
           <div className="mono-text" style={{ fontSize: '0.90rem', fontWeight: 800, color: 'var(--text-primary)', marginTop: '4px' }}>
-            {spill?.detected_at ? new Date(spill.detected_at).toLocaleString() : '2026-09-02 04:12 UTC'}
+            {spill?.detected_at ? new Date(spill.detected_at).toLocaleString() : '--'}
           </div>
           <div style={{ fontSize: '0.66rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
-            Copernicus Sentinel-1 SAR Orbit #34821
+            {spill ? (spill.source_image ? spill.source_image.slice(0, 32) + '...' : 'Copernicus Sentinel-1 SAR') : 'Awaiting acquisition'}
           </div>
         </div>
       </div>
@@ -318,14 +296,16 @@ export const TelemetryEvidencePage: React.FC<TelemetryEvidencePageProps> = ({
             <div style={{ backgroundColor: '#F8FAFC', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
               <div style={{ fontSize: '0.62rem', color: 'var(--text-secondary)', fontWeight: 700 }}>CANDIDATE VESSELS IDENTIFIED</div>
               <div className="mono-text" style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--navy-primary)' }}>
-                {vesselCorrelation?.candidate_vessels?.length || 18}
+                {vesselCorrelation?.candidate_vessels ? vesselCorrelation.candidate_vessels.length : (spill ? 0 : '--')}
               </div>
             </div>
 
             <div style={{ backgroundColor: '#F8FAFC', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
               <div style={{ fontSize: '0.62rem', color: 'var(--text-secondary)', fontWeight: 700 }}>AIS TELEMETRY POINTS</div>
               <div className="mono-text" style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--navy-primary)' }}>
-                14,280
+                {vesselCorrelation?.candidate_vessels
+                  ? (vesselCorrelation.candidate_vessels.reduce((acc, v) => acc + (v.track?.length || 0), 0)).toLocaleString()
+                  : (spill ? '0' : '--')}
               </div>
             </div>
           </div>
@@ -387,7 +367,18 @@ export const TelemetryEvidencePage: React.FC<TelemetryEvidencePageProps> = ({
 
           {/* Ledger List */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, maxHeight: '220px', overflowY: 'auto' }}>
-            {ledgerEntries.map((entry, idx) => (
+            {ledgerEntries.length === 0 ? (
+              <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                <ShieldCheck size={28} color="#94A3B8" style={{ marginBottom: '6px' }} />
+                <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                  No Cryptographic Ledger Entries Yet
+                </div>
+                <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                  Select or run a live detection to generate the SHA-256 evidence chain.
+                </div>
+              </div>
+            ) : (
+              ledgerEntries.map((entry, idx) => (
               <div
                 key={idx}
                 style={{
@@ -426,7 +417,7 @@ export const TelemetryEvidencePage: React.FC<TelemetryEvidencePageProps> = ({
                   <Copy size={13} />
                 </button>
               </div>
-            ))}
+            )))}
           </div>
 
           {/* Blockchain / Testnet Anchor Link & Verify Action */}

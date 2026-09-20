@@ -1,0 +1,204 @@
+{
+  "fixture_id": "malacca_strait_validation",
+  "title": "Strait of Malacca Dark Vessel Bunker Discharge",
+  "region": "Southeast Asia (Singapore Strait)",
+  "incident_date": "2026-09-05T22:15:00Z",
+  "description": "Maritime chokepoint scenario with an AIS-dark loitering bulk carrier exhibiting speed-drop anomaly and slick alignment.",
+  "tags": ["AIS Gap", "Speed Drop", "Chokepoint Corridor", "Bonn Code 2"],
+  "assembled_at": "2026-09-06T04:00:00Z",
+  "provenance": "VALIDATION-FIXTURE",
+  "provenance_registry": {
+    "detection": "DETECTED",
+    "environmental_currents_wind": "MEASURED",
+    "drift_hindcast_forecast": "MODEL-PREDICTED",
+    "vessel_anomaly_attribution": "ANOMALY-FLAGGED",
+    "optical_fusion": "MEASURED",
+    "sar_thickness": "MODEL-PREDICTED"
+  },
+  "spill": {
+    "spill_id": "malacca_strait_validation",
+    "detected_at": "2026-09-05T22:15:00Z",
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [104.050, 1.280],
+          [104.090, 1.315],
+          [104.140, 1.340],
+          [104.145, 1.325],
+          [104.095, 1.300],
+          [104.055, 1.270],
+          [104.050, 1.280]
+        ]
+      ]
+    },
+    "area_km2": 5.12,
+    "perimeter_km": 14.60,
+    "centroid": [104.095, 1.308],
+    "length_km": 11.20,
+    "width_km": 0.65,
+    "bbox": [104.050, 1.270, 104.145, 1.340],
+    "orientation_deg": 65.0,
+    "confidence": 0.91,
+    "estimated_age_hours": [4.0, 10.0],
+    "source_image": "S1B_IW_GRDH_1SDV_20260905T221500_MALACCA_STRAIT",
+    "provenance": "DETECTED",
+    "wind_speed_ms": 4.2,
+    "wind_direction_deg": 180.0,
+    "aspect_ratio": 17.2,
+    "radar_band": "C-SAR (VV)"
+  },
+  "drift": {
+    "spill_id": "malacca_strait_validation",
+    "simulated_at": "2026-09-05T22:45:00Z",
+    "provenance": "MODEL-PREDICTED",
+    "particle_count": 600,
+    "backward": {
+      "origin_centroid": [104.020, 1.250],
+      "estimated_origin_time_window": {
+        "start": "2026-09-05T14:00:00Z",
+        "end": "2026-09-05T20:00:00Z",
+        "most_likely": "2026-09-05T17:30:00Z"
+      },
+      "release_confidence": 0.88,
+      "p50_contour": {
+        "type": "Polygon",
+        "coordinates": [[[104.010, 1.240], [104.030, 1.240], [104.030, 1.260], [104.010, 1.260], [104.010, 1.240]]]
+      },
+      "p75_contour": {
+        "type": "Polygon",
+        "coordinates": [[[104.000, 1.230], [104.040, 1.230], [104.040, 1.270], [104.000, 1.270], [104.000, 1.230]]]
+      },
+      "p95_contour": {
+        "type": "Polygon",
+        "coordinates": [[[103.985, 1.215], [104.055, 1.215], [104.055, 1.285], [103.985, 1.285], [103.985, 1.215]]]
+      }
+    },
+    "forward": {
+      "hours_ahead": 24,
+      "predicted_centroid": [104.220, 1.390],
+      "shoreline_threat": true,
+      "distance_to_nearest_coast_km": 8.5,
+      "p50_contour": {
+        "type": "Polygon",
+        "coordinates": [[[104.200, 1.370], [104.240, 1.370], [104.240, 1.410], [104.200, 1.410], [104.200, 1.370]]]
+      },
+      "p75_contour": {
+        "type": "Polygon",
+        "coordinates": [[[104.180, 1.350], [104.260, 1.350], [104.260, 1.430], [104.180, 1.430], [104.180, 1.350]]]
+      },
+      "p95_contour": {
+        "type": "Polygon",
+        "coordinates": [[[104.150, 1.320], [104.290, 1.320], [104.290, 1.460], [104.150, 1.460], [104.150, 1.320]]]
+      }
+    },
+    "vector_field": {
+      "ocean_arrows": [
+        {"lon": 104.05, "lat": 1.28, "u_ms": 0.45, "v_ms": 0.22, "speed_ms": 0.50, "direction_deg": 64.0}
+      ],
+      "wind_arrows": [
+        {"lon": 104.05, "lat": 1.28, "u_ms": 0.0, "v_ms": 4.20, "speed_ms": 4.20, "direction_deg": 0.0}
+      ]
+    },
+    "particle_trajectories": []
+  },
+  "vessels": {
+    "spill_id": "malacca_strait_validation",
+    "analyzed_at": "2026-09-05T23:00:00Z",
+    "provenance": "ANOMALY-FLAGGED",
+    "disclaimer": "DISCLAIMER: Suspect rankings are based on kinematic and spatiotemporal anomaly modeling and do not constitute legal proof.",
+    "search_criteria": {
+      "origin_bbox": [103.95, 1.20, 104.10, 1.30],
+      "time_window_start": "2026-09-05T12:00:00Z",
+      "time_window_end": "2026-09-05T22:00:00Z",
+      "padding_hours": 12.0
+    },
+    "total_vessels_in_corridor": 34,
+    "candidate_vessels_count": 2,
+    "candidate_vessels": [
+      {
+        "mmsi": 563001889,
+        "imo": 9321456,
+        "vessel_name": "STAR ASIA",
+        "ship_type": "Bulk Carrier",
+        "flag_country": "Singapore",
+        "length_m": 225.0,
+        "width_m": 32.0,
+        "closest_approach_distance_km": 0.28,
+        "closest_approach_time": "2026-09-05T17:28:00Z",
+        "temporal_proximity_score": 0.98,
+        "spatial_proximity_score": 0.97,
+        "kinematic_anomaly_score": 0.94,
+        "heading_alignment_score": 0.96,
+        "ais_gap_detected": true,
+        "ais_gap_duration_minutes": 82.0,
+        "suspect_score": 0.96,
+        "provenance": "ANOMALY-FLAGGED",
+        "features": {
+          "cpa_distance_km": 0.28,
+          "cpa_time_delta_h": 0.03,
+          "course_slick_alignment_deg": 3.4,
+          "speed_variance_knots": 6.5,
+          "ais_gap_duration_min": 82.0,
+          "loitering_duration_min": 45.0,
+          "isolation_forest_score": -0.68,
+          "heuristic_score": 0.98
+        },
+        "track": [
+          {"lon": 103.980, "lat": 1.220, "sog_knots": 12.8, "cog_deg": 65.0, "timestamp": "2026-09-05T16:00:00Z"},
+          {"lon": 104.020, "lat": 1.250, "sog_knots": 5.2, "cog_deg": 64.0, "timestamp": "2026-09-05T17:28:00Z"},
+          {"lon": 104.080, "lat": 1.295, "sog_knots": 13.1, "cog_deg": 66.0, "timestamp": "2026-09-05T19:30:00Z"}
+        ]
+      }
+    ],
+    "scoring_weights": {
+      "temporal_proximity": 0.25,
+      "spatial_proximity": 0.30,
+      "kinematic_anomaly": 0.25,
+      "heading_alignment": 0.20
+    }
+  },
+  "optical": {
+    "spill_id": "malacca_strait_validation",
+    "analyzed_at": "2026-09-05T23:10:00Z",
+    "optical_confirmed": true,
+    "reason": "Clear MSI band reflectance confirmed rainbow interference pattern",
+    "sentinel2_scene_id": "S2A_MSIL2A_20260905T033000_R046_MALACCA",
+    "bonn_code": 2,
+    "bonn_label": "Rainbow Sheen (BAOAC 2)",
+    "estimated_thickness_range_um": "0.3 - 5.0 μm",
+    "provenance": "MEASURED",
+    "rgb_composite_available": true,
+    "hue_clusters": [
+      {"cluster_id": 1, "color_hex": "#7CA982", "percentage": 42.0, "description": "Cyan/green iridescent sheen"},
+      {"cluster_id": 2, "color_hex": "#E0C9A6", "percentage": 38.0, "description": "Gold/amber dispersion"},
+      {"cluster_id": 3, "color_hex": "#A2708F", "percentage": 20.0, "description": "Magenta boundary sheen"}
+    ]
+  },
+  "sar_thickness": {
+    "spill_id": "malacca_strait_validation",
+    "analyzed_at": "2026-09-05T23:15:00Z",
+    "classification": "thin_sheen",
+    "confidence": 0.92,
+    "backscatter_contrast_db": 4.25,
+    "fragmentation_index": 0.88,
+    "cross_validated_with_optical": true,
+    "provenance": "MODEL-PREDICTED",
+    "details": "Linear slick shape with high aspect ratio and 4.25 dB contrast corresponds to thin rainbow sheen",
+    "glcm_features": {
+      "contrast": 0.22,
+      "homogeneity": 0.89,
+      "energy": 0.62,
+      "entropy": 0.98,
+      "correlation": 0.84,
+      "dissimilarity": 0.18
+    }
+  },
+  "stats": {
+    "area_km2": 5.12,
+    "top_suspect": "STAR ASIA",
+    "top_score": 0.96,
+    "thickness_class": "thin_sheen",
+    "bonn_code": 2
+  }
+}

@@ -16,7 +16,7 @@ class AISDatasetImporter:
     """
 
     @staticmethod
-    def parse_csv_content(csv_text: str, source_label: str = "CSV_IMPORT") -> Tuple[int, int, Dict[str, Any]]:
+    def parse_csv_content(csv_text: str, source_label: str = "IMPORTED_REAL_AIS") -> Tuple[int, int, Dict[str, Any]]:
         """
         Parses raw CSV string with flexible column detection and inserts pings in batches.
         Returns (pings_inserted, unique_vessels, metadata).
@@ -173,7 +173,7 @@ class AISDatasetImporter:
         return total_pings_imported, len(unique_mmsis), meta
 
     @staticmethod
-    def parse_geojson_content(geojson_dict: Dict[str, Any], source_label: str = "GEOJSON_IMPORT") -> Tuple[int, int, Dict[str, Any]]:
+    def parse_geojson_content(geojson_dict: Dict[str, Any], source_label: str = "IMPORTED_REAL_AIS") -> Tuple[int, int, Dict[str, Any]]:
         """
         Parses GeoJSON FeatureCollection of Point or LineString vessel tracks.
         """

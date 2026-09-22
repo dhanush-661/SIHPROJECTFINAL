@@ -96,7 +96,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="AquaSentinel — Marine Oil-Spill Detection & Vessel Attribution Platform API",
-    description="SIH 2026 Prototype — Sentinel-1 SAR dark spot segmentation, UTM geospatial metrics, Copernicus/ERA5 drift simulation, AIS spatiotemporal correlation, ML anomaly attribution, Sentinel-2 optical fusion (Bonn Agreement) & SAR thickness classification.",
+    description="SIH 2026 Prototype — Multi-Satellite Earth Observation: Sentinel-1 SAR dark spot segmentation, Sentinel-2 MSI, Landsat 8 (OLI/TIRS) & Landsat 9 (OLI-2/TIRS-2) optical/thermal fusion (Bonn Agreement), Copernicus/ERA5 drift simulation, AIS spatiotemporal correlation, ML anomaly attribution, and SAR thickness classification.",
     version="4.0.0",
     lifespan=lifespan
 )
@@ -525,13 +525,19 @@ def fuse_optical_for_spill(
     request: Optional[OpticalFusionRequest] = None
 ) -> OpticalConfirmationResponse:
     """
-    Primary Phase 5 Optical Fusion Endpoint:
-    - Queries GEE Sentinel-2 SR (COPERNICUS/S2_SR_HARMONIZED) for the closest cloud-cover-filtered (<20%) scene within +/-48h
-    - If no clean scene exists, returns optical_confirmed: null with reason (Never fabricates confirmation)
-    - If scene exists: clips to SAR polygon (buffered), computes mean color/reflectance and KMeans hue clustering
-    - Classifies against the Bonn Agreement Oil Appearance Code (Codes 1-5 with documented thickness ranges)
-    - Returns bonn_code, bonn_label, estimated_thickness_range_um, optical_confirmed, sentinel2_scene_id, provenance: 'MEASURED'
-    - Persists results to optical_confirmations database table
+    Primary Phase 5 Multi-Satellite Optical & Thermal Fusion Endpoint:
+    - Queries GEE Sentinel-2 SR (COPERNICUS/S2_SR_HARMONIZED), Landsat 8 (LANDSAT/LC08/C02/T1_L2),
+      or Landsat 9 (LANDSAT/LC09/C02/T1_L2) for closest cloud-filtered (<20%) pass within search window.
+    - Supports AUTO (best revisit across S2/L8/L9), SENTINEL_2, LANDSAT_8, or LANDSAT_9.
+    - If no clean scene exists, returns optical_confirmed: null with reason (Never fabricates confirmation).
+    - If scene exists: clips to SAR polygon (buffered), computes mean color/reflectance, NDWI/NDVI land rejection,
+      and KMeans hue clustering.
+    - Classifies against the Bonn Agreement Oil Appearance Code (Codes 1-5 with documented thickness ranges).
+    - For Landsat 8 & 9: extracts TIRS Thermal Infrared Radiometry (Band 10) to quantify slick surface temperature
+      and delta-T thermal anomalies over thick emulsions.
+    - Returns satellite_platform, sensor_name, scene_id, bonn_code, bonn_label, estimated_thickness_range_um,
+      thermal_telemetry, optical_confirmed, provenance: 'MEASURED'.
+    - Persists results to optical_confirmations database table and logs to evidence ledger.
     """
     spill = db_service.get_spill_by_id(spill_id)
     if not spill:
@@ -540,7 +546,8 @@ def fuse_optical_for_spill(
     fusion_request = request or OpticalFusionRequest()
 
     try:
-        logger.info(f"Running Sentinel-2 MSI SR optical fusion & Bonn Agreement classification for {spill_id}...")
+        platform_name = fusion_request.satellite_platform or "AUTO"
+        logger.info(f"Running Multi-Satellite ({platform_name}) optical/thermal fusion & Bonn Agreement classification for {spill_id}...")
         result = optical_fusion_service.fuse_spill_optical(spill, fusion_request)
         _optical_cache[spill_id] = result
         db_service.save_optical_confirmation(spill_id, result)

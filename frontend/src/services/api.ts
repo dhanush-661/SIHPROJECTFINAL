@@ -183,7 +183,14 @@ export async function getAssembledSpill(
 
 export async function runOpticalFusion(
   spillId: string,
-  options?: { max_cloud_cover_pct?: number; time_window_hours?: number; buffer_meters?: number }
+  options?: {
+    max_cloud_cover_pct?: number;
+    time_window_hours?: number;
+    buffer_meters?: number;
+    satellite_platform?: string;
+    include_thermal?: boolean;
+    force_no_scene?: boolean;
+  }
 ): Promise<import('../types/forensics').OpticalConfirmationResult> {
   const res = await fetch(`${API_BASE_URL}/fusion/${spillId}`, {
     method: 'POST',

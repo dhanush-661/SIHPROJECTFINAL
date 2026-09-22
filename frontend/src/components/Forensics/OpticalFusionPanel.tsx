@@ -100,6 +100,7 @@ export const OpticalFusionPanel: React.FC<OpticalFusionPanelProps> = ({
   isLoading,
   onResultChange,
 }) => {
+  const [selectedPlatform, setSelectedPlatform] = useState<string>('AUTO');
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -112,6 +113,8 @@ export const OpticalFusionPanel: React.FC<OpticalFusionPanelProps> = ({
         max_cloud_cover_pct: 20,
         time_window_hours: 48,
         buffer_meters: 300,
+        satellite_platform: selectedPlatform,
+        include_thermal: true,
       });
       onResultChange(result);
     } catch (err: any) {
@@ -142,7 +145,7 @@ export const OpticalFusionPanel: React.FC<OpticalFusionPanelProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Eye size={15} color="#818cf8" />
           <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#fff' }}>
-            OPTICAL FUSION — SENTINEL-2 SR
+            MULTI-SATELLITE OPTICAL &amp; THERMAL FUSION
           </span>
         </div>
         <span style={{
@@ -151,6 +154,47 @@ export const OpticalFusionPanel: React.FC<OpticalFusionPanelProps> = ({
           background: 'rgba(129,140,248,0.15)', color: '#818cf8',
           border: '1px solid rgba(129,140,248,0.3)',
         }}>MEASURED</span>
+      </div>
+
+      {/* Constellation Selector */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(4, 1fr)',
+        gap: '4px',
+        padding: '3px',
+        background: 'rgba(7,13,24,0.6)',
+        borderRadius: '7px',
+        border: '1px solid var(--panel-border)',
+      }}>
+        {[
+          { id: 'AUTO', label: 'Auto (Best)', hint: 'S2+L8+L9' },
+          { id: 'SENTINEL_2', label: 'Sentinel-2', hint: '10m MSI' },
+          { id: 'LANDSAT_8', label: 'Landsat 8', hint: '30m+TIRS' },
+          { id: 'LANDSAT_9', label: 'Landsat 9', hint: '30m+TIRS' },
+        ].map((p) => {
+          const isActive = selectedPlatform === p.id;
+          return (
+            <button
+              key={p.id}
+              onClick={() => setSelectedPlatform(p.id)}
+              style={{
+                padding: '6px 4px',
+                borderRadius: '5px',
+                border: isActive ? '1px solid rgba(129,140,248,0.6)' : '1px solid transparent',
+                background: isActive ? 'rgba(129,140,248,0.2)' : 'transparent',
+                color: isActive ? '#fff' : 'var(--text-muted)',
+                fontSize: '0.68rem',
+                fontWeight: isActive ? 700 : 500,
+                cursor: 'pointer',
+                textAlign: 'center',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              <div>{p.label}</div>
+              <div style={{ fontSize: '0.55rem', opacity: 0.75 }}>{p.hint}</div>
+            </button>
+          );
+        })}
       </div>
 
       {/* Run Button */}
@@ -172,15 +216,15 @@ export const OpticalFusionPanel: React.FC<OpticalFusionPanelProps> = ({
           }}
         >
           {isRunning
-            ? <><RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> Querying Sentinel-2 MSI SR...</>
-            : <><Eye size={14} /> {opticalResult ? 'Re-run Optical Fusion' : 'Run Optical Fusion (P5)'}</>
+            ? <><RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> Querying {selectedPlatform === 'AUTO' ? 'Satellite Constellation' : selectedPlatform}...</>
+            : <><Eye size={14} /> {opticalResult ? `Re-run ${selectedPlatform} Fusion` : `Run Optical Fusion (${selectedPlatform})`}</>
           }
         </button>
       )}
 
       {!spill && (
         <div style={{ padding: '12px', borderRadius: '6px', background: 'rgba(7,13,24,0.5)', color: 'var(--text-muted)', fontSize: '0.78rem', textAlign: 'center' }}>
-          Select a detected spill to run optical fusion.
+          Select a detected spill to run multi-satellite optical fusion.
         </div>
       )}
 
@@ -205,16 +249,23 @@ export const OpticalFusionPanel: React.FC<OpticalFusionPanelProps> = ({
             <span style={{ fontWeight: 700, fontSize: '0.78rem' }}>{statusConfig.label}</span>
           </div>
 
-          {/* Scene metadata row */}
-          {opticalResult.sentinel2_scene_id && (
+          {/* Scene & Satellite metadata row */}
+          {(opticalResult.scene_id || opticalResult.sentinel2_scene_id) && (
             <div style={{
               padding: '8px 10px', borderRadius: '6px',
               background: 'rgba(7,13,24,0.7)', border: '1px solid var(--panel-border)',
               fontSize: '0.68rem',
             }}>
-              <div style={{ color: 'var(--text-muted)', marginBottom: '4px', fontWeight: 700 }}>SENTINEL-2 MSI SR SCENE</div>
-              <div className="mono-text" style={{ color: '#818cf8', wordBreak: 'break-all', marginBottom: '6px' }}>
-                {opticalResult.sentinel2_scene_id}
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                <span style={{ color: '#818cf8', fontWeight: 700, letterSpacing: '0.04em' }}>
+                  {opticalResult.satellite_platform || 'Sentinel-2 MSI'}
+                </span>
+                <span style={{ color: 'var(--text-muted)', fontSize: '0.62rem' }}>
+                  {opticalResult.resolution_meters ? `${opticalResult.resolution_meters}m resolution` : '10m'}
+                </span>
+              </div>
+              <div className="mono-text" style={{ color: '#c4b5fd', wordBreak: 'break-all', marginBottom: '6px', fontSize: '0.65rem' }}>
+                {opticalResult.scene_id || opticalResult.sentinel2_scene_id}
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
                 <div><span style={{ color: 'var(--text-muted)' }}>Cloud Cover: </span><span className="mono-text" style={{ color: '#34d399' }}>{opticalResult.scene_cloud_cover_pct?.toFixed(1)}%</span></div>
@@ -223,6 +274,42 @@ export const OpticalFusionPanel: React.FC<OpticalFusionPanelProps> = ({
                   <div><span style={{ color: 'var(--text-muted)' }}>Slick Coverage: </span><span className="mono-text" style={{ color: '#fff' }}>{opticalResult.slick_coverage_pct?.toFixed(1)}%</span></div>
                 )}
                 <div><span style={{ color: 'var(--text-muted)' }}>Thickness: </span><span className="mono-text" style={{ color: '#c4b5fd' }}>{opticalResult.estimated_thickness_range_um || '—'}</span></div>
+              </div>
+            </div>
+          )}
+
+          {/* Landsat Thermal Infrared Radiometry (TIRS Band 10) */}
+          {opticalResult.thermal_telemetry && (
+            <div style={{
+              padding: '8px 10px', borderRadius: '6px',
+              background: 'linear-gradient(135deg, rgba(239,68,68,0.08), rgba(245,158,11,0.08))',
+              border: '1px solid rgba(245,158,11,0.3)',
+              fontSize: '0.68rem',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                <span style={{ color: '#f59e0b', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  🔥 THERMAL INFRARED (TIRS BAND 10)
+                </span>
+                <span className="mono-text" style={{ color: opticalResult.thermal_telemetry.thermal_contrast_k >= 1.0 ? '#ef4444' : '#f59e0b', fontWeight: 700 }}>
+                  ΔT: {opticalResult.thermal_telemetry.thermal_contrast_k > 0 ? `+${opticalResult.thermal_telemetry.thermal_contrast_k.toFixed(1)}K` : `${opticalResult.thermal_telemetry.thermal_contrast_k.toFixed(1)}K`}
+                </span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', marginBottom: '6px' }}>
+                <div>
+                  <span style={{ color: 'var(--text-muted)' }}>Slick Temp: </span>
+                  <span className="mono-text" style={{ color: '#fff' }}>
+                    {opticalResult.thermal_telemetry.brightness_temp_k.toFixed(1)}K ({(opticalResult.thermal_telemetry.brightness_temp_k - 273.15).toFixed(1)}°C)
+                  </span>
+                </div>
+                <div>
+                  <span style={{ color: 'var(--text-muted)' }}>Sea Ambient: </span>
+                  <span className="mono-text" style={{ color: '#94a3b8' }}>
+                    {opticalResult.thermal_telemetry.ambient_sea_temp_k.toFixed(1)}K ({(opticalResult.thermal_telemetry.ambient_sea_temp_k - 273.15).toFixed(1)}°C)
+                  </span>
+                </div>
+              </div>
+              <div style={{ color: '#e2e8f0', fontSize: '0.64rem', lineHeight: 1.4, borderTop: '1px solid rgba(245,158,11,0.15)', paddingTop: '4px' }}>
+                {opticalResult.thermal_telemetry.thermal_signature}
               </div>
             </div>
           )}

@@ -466,10 +466,12 @@ class AISEngine:
         origin_centroid: List[float],
         origin_window: Dict[str, str],
         slick_orientation_deg: float = 140.0,
-        padding_hours: float = 12.0,
-        buffer_km: float = 25.0,
+        padding_hours: float = 48.0,
+        buffer_km: float = 15.0,
+        investigation_radius_km: Optional[float] = None,
+        time_window_hours: Optional[float] = None,
         spill_id: Optional[str] = None,
-        strict_real_ais_only: bool = False,
+        strict_real_ais_only: bool = True,
         fetch_online_gfw: bool = True
     ) -> Tuple[List[Dict[str, Any]], SearchCriteria, int]:
         """
@@ -482,33 +484,42 @@ class AISEngine:
         """
         c_lon, c_lat = origin_centroid[0], origin_centroid[1]
         
+        # Effective investigation parameters
+        eff_radius_km = investigation_radius_km if investigation_radius_km is not None else buffer_km
+        eff_time_hours = time_window_hours if time_window_hours is not None else padding_hours
+
         # Parse time window
         t_likely_str = origin_window.get("most_likely", "2026-09-06T20:00:00Z")
         t_likely = datetime.datetime.fromisoformat(t_likely_str.replace("Z", "+00:00"))
         
-        t_start = t_likely - datetime.timedelta(hours=padding_hours + 8.0)
-        t_end = t_likely + datetime.timedelta(hours=padding_hours + 8.0)
+        t_start = t_likely - datetime.timedelta(hours=eff_time_hours)
+        t_end = t_likely + datetime.timedelta(hours=eff_time_hours)
 
-        # Search bounding box in WGS84 (~0.35 deg buffer)
-        deg_pad = buffer_km / 111.0
+        # Incident Investigation Bounding Box in WGS84
+        cos_lat = max(math.cos(math.radians(c_lat)), 0.1)
+        deg_pad_lat = eff_radius_km / 111.0
+        deg_pad_lon = eff_radius_km / (111.0 * cos_lat)
+
         search_bbox = [
-            round(c_lon - deg_pad, 4),
-            round(c_lat - deg_pad, 4),
-            round(c_lon + deg_pad, 4),
-            round(c_lat + deg_pad, 4)
+            round(c_lon - deg_pad_lon, 4),
+            round(c_lat - deg_pad_lat, 4),
+            round(c_lon + deg_pad_lon, 4),
+            round(c_lat + deg_pad_lat, 4)
         ]
 
         criteria = SearchCriteria(
             origin_bbox=search_bbox,
             time_window_start=t_start.isoformat(),
             time_window_end=t_end.isoformat(),
-            padding_hours=padding_hours
+            padding_hours=eff_time_hours,
+            investigation_radius_km=eff_radius_km,
+            time_window_hours=eff_time_hours
         )
 
         vessels_data: List[Dict[str, Any]] = []
 
         # =========================================================================
-        # Tier 1: Query Local Historical Persistent AIS Store (NOAA/GFW/Real streams)
+        # Tier 1: Query Local Historical Persistent AIS Store (NOAA/GFW/Imported)
         # =========================================================================
         try:
             from app.services.db_service import db_service
@@ -518,6 +529,15 @@ class AISEngine:
                 end_time_iso=t_end.isoformat()
             )
             for dt in db_tracks:
+                src = dt.get("data_source") or dt.get("source") or "HISTORICAL_ARCHIVE"
+                if "IMPORT" in src.upper() or "CSV" in src.upper():
+                    dt["provenance_label"] = "REAL AIS — IMPORTED"
+                    dt["data_source"] = "IMPORTED_REAL_AIS"
+                else:
+                    dt["provenance_label"] = "REAL AIS"
+                    dt["data_source"] = "REAL_AIS"
+                dt["ais_source"] = src
+                dt["is_authentic_real"] = True
                 vessels_data.append(dt)
             if db_tracks:
                 logger.info(f"Retrieved {len(db_tracks)} authentic historical vessel tracks from SQLite store.")
@@ -538,6 +558,10 @@ class AISEngine:
                 existing_mmsi = {v["mmsi"] for v in vessels_data}
                 for gv in gfw_online_vessels:
                     if gv["mmsi"] not in existing_mmsi:
+                        gv["provenance_label"] = "REAL AIS"
+                        gv["data_source"] = "REAL_AIS"
+                        gv["ais_source"] = "GFW_CLOUD_GATEWAY"
+                        gv["is_authentic_real"] = True
                         vessels_data.append(gv)
                         existing_mmsi.add(gv["mmsi"])
                 if gfw_online_vessels:
@@ -560,8 +584,8 @@ class AISEngine:
 
                 v_lon = live_v.get("lon", 0.0)
                 v_lat = live_v.get("lat", 0.0)
-                if (search_bbox[0] - 0.5 <= v_lon <= search_bbox[2] + 0.5 and
-                    search_bbox[1] - 0.5 <= v_lat <= search_bbox[3] + 0.5):
+                if (search_bbox[0] - 0.1 <= v_lon <= search_bbox[2] + 0.1 and
+                    search_bbox[1] - 0.1 <= v_lat <= search_bbox[3] + 0.1):
                     
                     raw_pts = live_v.get("track", [[v_lon, v_lat]])
                     v_points: List[VesselPoint] = []
@@ -589,7 +613,9 @@ class AISEngine:
                         "has_deliberate_gap": False,
                         "is_ais_dark": False,
                         "provenance": "MEASURED_LIVE_AIS",
+                        "provenance_label": "REAL AIS — LIVE",
                         "data_source": "LIVE_STREAM",
+                        "ais_source": "AISSTREAM_LIVE_CACHE",
                         "is_authentic_real": True
                     })
                     existing_mmsi.add(v_mmsi)
@@ -601,7 +627,7 @@ class AISEngine:
         # =========================================================================
         if strict_real_ais_only:
             # Under strict mode, NEVER generate synthetic corridor benchmark vessels.
-            # Return only what was physically measured in the historical database or live stream.
+            # Return only what was physically measured in the historical database, live stream, or imported files.
             total_corridor_vessels = len(vessels_data)
             return vessels_data, criteria, total_corridor_vessels
 
@@ -614,10 +640,12 @@ class AISEngine:
             for b in benchmarks:
                 if b["mmsi"] not in existing_mmsi:
                     b["is_authentic_real"] = False
-                    b["data_source"] = "CORRIDOR_BENCHMARK"
+                    b["data_source"] = "MODELLED"
+                    b["provenance_label"] = "MODELLED"
+                    b["ais_source"] = "KINEMATIC_CORRIDOR_SIMULATION"
                     vessels_data.append(b)
 
-        total_corridor_vessels = len(vessels_data) + (14 if not strict_real_ais_only else 0)
+        total_corridor_vessels = len(vessels_data)
         return vessels_data, criteria, total_corridor_vessels
 
     def _get_regional_fleet_profiles(self, c_lon: float, c_lat: float, spill_id: Optional[str] = None) -> List[Dict[str, Any]]:

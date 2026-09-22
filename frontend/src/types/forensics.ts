@@ -8,11 +8,23 @@ export interface HueCluster {
   description: string;
 }
 
+export interface ThermalTelemetry {
+  brightness_temp_k: number;
+  ambient_sea_temp_k: number;
+  thermal_contrast_k: number;
+  sensor_band: string;
+  thermal_signature: string;
+}
+
 export interface OpticalConfirmationResult {
   spill_id: string;
   analyzed_at: string;
   optical_confirmed: boolean | null;
   reason: string;
+  satellite_platform?: string;
+  sensor_name?: string;
+  scene_id?: string | null;
+  resolution_meters?: number | null;
   sentinel2_scene_id: string | null;
   scene_cloud_cover_pct: number | null;
   time_difference_hours: number | null;
@@ -25,10 +37,12 @@ export interface OpticalConfirmationResult {
     B2_blue: number;
     B3_green: number;
     B4_red: number;
-    B8_nir: number;
+    B8_nir?: number;
+    B5_nir?: number;
   } | null;
   hue_clusters: HueCluster[] | null;
   slick_coverage_pct: number | null;
+  thermal_telemetry?: ThermalTelemetry | null;
   provenance: string;
   disclaimer: string;
 }

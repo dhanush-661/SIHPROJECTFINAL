@@ -43,6 +43,11 @@ export interface CandidateVessel {
   is_ais_dark_suspect: boolean;
   is_authentic_real?: boolean;
   data_source?: string;
+  provenance_label?: string;
+  distance_from_spill_km?: number | null;
+  time_diff_hours_from_spill?: number | null;
+  observation_count?: number | null;
+  ais_source?: string | null;
 }
 
 export interface SearchCriteria {
@@ -50,11 +55,14 @@ export interface SearchCriteria {
   time_window_start: string;
   time_window_end: string;
   padding_hours: number;
+  investigation_radius_km?: number;
 }
 
 export interface VesselCorrelationRequest {
   origin_buffer_km?: number;
+  investigation_radius_km?: number;
   time_window_padding_hours?: number;
+  time_window_hours?: number;
   weight_proximity?: number;
   weight_temporal?: number;
   weight_trajectory?: number;
@@ -67,6 +75,14 @@ export interface VesselCorrelationResponse {
   spill_id: string;
   analyzed_at: string;
   provenance: string;
+  evidence_status?: string;
+  data_source?: string;
+  records_found?: number;
+  investigation_center?: [number, number];
+  investigation_radius_km?: number;
+  time_window_hours?: number;
+  is_synthetic_incident?: boolean;
+  evidence_reason?: string | null;
   disclaimer: string;
   search_criteria: SearchCriteria;
   total_vessels_in_corridor: number;

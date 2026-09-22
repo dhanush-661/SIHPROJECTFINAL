@@ -7,6 +7,7 @@ import {
   Marker,
   Popup,
   Polyline,
+  Circle,
   useMap,
   LayersControl,
   ZoomControl
@@ -254,6 +255,9 @@ interface MarineMapProps {
   liveAISVessels?: LiveAISVessel[];
   showLiveAIS?: boolean;
 
+  // Incident Investigation Window
+  investigationRadiusKm?: number;
+
   // Phase 4 Timeline Scrubber State
   timelineOffsetHours?: number;
 }
@@ -277,6 +281,7 @@ export const MarineMap: React.FC<MarineMapProps> = ({
   showVesselTracks = true,
   liveAISVessels = [],
   showLiveAIS = true,
+  investigationRadiusKm = 15.0,
   timelineOffsetHours = 0,
 }) => {
   const defaultCenter: [number, number] = selectedSpill
@@ -512,11 +517,28 @@ export const MarineMap: React.FC<MarineMapProps> = ({
           </>
         )}
 
+        {/* 6.5 Incident Investigation Window Perimeter */}
+        {selectedSpill && (
+          <Circle
+            center={[selectedSpill.centroid[1], selectedSpill.centroid[0]]}
+            radius={investigationRadiusKm * 1000}
+            pathOptions={{
+              color: '#38BDF8',
+              fillColor: '#0284C7',
+              fillOpacity: 0.05,
+              weight: 1.5,
+              dashArray: '5, 5',
+            }}
+          />
+        )}
+
         {/* 7. Candidate Vessel AIS Tracks & Waypoints */}
         {showVesselTracks &&
           candidateVessels.map((vessel) => {
             const isSelected = selectedVessel?.mmsi === vessel.mmsi;
-            const scoreColor = vessel.suspect_score >= 0.75 ? '#f43f5e' : vessel.suspect_score >= 0.5 ? '#ffaa00' : '#00e676';
+            const prov = vessel.provenance_label || (vessel.is_authentic_real ? 'REAL AIS' : 'MODELLED');
+            const isReal = vessel.is_authentic_real;
+            const trackColor = isReal ? '#10B981' : '#F59E0B';
             const trackCoords: [number, number][] = vessel.track.map((pt) => [pt.lat, pt.lon]);
 
             // Find closest position to the simulated scrubbed timestamp
@@ -537,10 +559,10 @@ export const MarineMap: React.FC<MarineMapProps> = ({
                 <Polyline
                   positions={trackCoords}
                   pathOptions={{
-                    color: scoreColor,
+                    color: trackColor,
                     weight: isSelected ? 3.5 : 2.0,
                     opacity: isSelected ? 0.95 : 0.65,
-                    dashArray: vessel.is_ais_dark_suspect ? '4, 4' : undefined,
+                    dashArray: isReal ? undefined : '6, 6',
                   }}
                   eventHandlers={{
                     click: () => onSelectVessel && onSelectVessel(vessel),
@@ -557,17 +579,20 @@ export const MarineMap: React.FC<MarineMapProps> = ({
                 >
                   <Popup>
                     <div style={{ fontSize: '0.8rem', padding: '4px' }}>
-                      <div style={{ fontWeight: 700, color: scoreColor, marginBottom: '2px' }}>
-                        {vessel.vessel_name} ({vessel.vessel_type})
+                      <div style={{ fontWeight: 700, color: trackColor, marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <span>{vessel.vessel_name} ({vessel.vessel_type})</span>
+                      </div>
+                      <div style={{ fontSize: '0.68rem', color: isReal ? '#10B981' : '#F59E0B', fontWeight: 700 }}>
+                        PROVENANCE: {prov}
                       </div>
                       <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
                         Flag: <b>{vessel.flag}</b> &bull; MMSI: <b>{vessel.mmsi}</b>
                       </div>
                       <div style={{ marginTop: '4px', fontSize: '0.72rem' }}>
-                        Suspect Score: <b style={{ color: scoreColor }}>{vessel.suspect_score.toFixed(2)}</b> (ML Anomaly: <b>{vessel.anomaly_score.toFixed(2)}</b>)
+                        Suspect Score: <b>{vessel.suspect_score.toFixed(2)}</b> (ML Anomaly: <b>{vessel.anomaly_score.toFixed(2)}</b>)
                       </div>
                       <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
-                        Speed: <b>{interpolatedPos.sog_knots} kts</b> &bull; Course: <b>{interpolatedPos.cog_deg}°</b>
+                        Speed: <b>{interpolatedPos.sog_knots} kts</b> &bull; Course: <b>{interpolatedPos.cog_deg}°</b> &bull; {vessel.observation_count ?? vessel.track?.length} pings
                       </div>
                     </div>
                   </Popup>

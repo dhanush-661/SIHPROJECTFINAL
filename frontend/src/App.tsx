@@ -342,12 +342,18 @@ function AppContent() {
   };
 
   // Run Vessel Correlation (Live)
-  const handleRunVesselAttribution = async (strictRealOnly: boolean = false) => {
+  const handleRunVesselAttribution = async (
+    strictRealOnly: boolean = true,
+    radiusKm: number = 15.0,
+    timeHours: number = 48.0
+  ) => {
     if (!selectedSpill) return;
     setIsRunningVessels(true);
     try {
       const res = await correlateVessels(selectedSpill.spill_id, {
-        strict_real_ais_only: strictRealOnly
+        strict_real_ais_only: strictRealOnly,
+        investigation_radius_km: radiusKm,
+        time_window_hours: timeHours,
       });
       setVesselCorrelation(res);
       if (res.candidate_vessels?.length > 0) {

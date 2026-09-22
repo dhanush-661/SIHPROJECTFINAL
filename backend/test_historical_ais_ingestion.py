@@ -16,6 +16,7 @@ class TestHistoricalAISIngestion(unittest.TestCase):
         self.temp_db_path = self.temp_db.name
         self.temp_db.close()
         self.db = DatabaseService(db_path=self.temp_db_path)
+        self.db.clear_historical_ais_pings()
         # Patch db_service in modules for isolation
         self.importer = AISDatasetImporter()
 
@@ -230,7 +231,11 @@ class TestHistoricalAISIngestion(unittest.TestCase):
             self.assertEqual(len(response.candidate_vessels), 1)
             self.assertEqual(response.candidate_vessels[0].mmsi, "419008912")
             self.assertTrue(response.candidate_vessels[0].is_authentic_real)
-            self.assertEqual(response.provenance, "MEASURED_HISTORICAL_AIS")
+            self.assertEqual(response.evidence_status, "VERIFIED_AIS_EVIDENCE")
+            self.assertEqual(response.records_found, 2)
+            self.assertEqual(response.candidate_vessels[0].observation_count, 2)
+            self.assertIsNotNone(response.candidate_vessels[0].distance_from_spill_km)
+            self.assertIsNotNone(response.candidate_vessels[0].time_diff_hours_from_spill)
 
         finally:
             db_service.db_path = orig_path
@@ -245,8 +250,8 @@ class TestHistoricalAISIngestion(unittest.TestCase):
             scorer = AnomalyAttributionScorer()
             req = VesselCorrelationRequest(
                 strict_real_ais_only=True,
-                origin_buffer_km=20.0,
-                time_window_padding_hours=4.0
+                investigation_radius_km=20.0,
+                time_window_hours=48.0
             )
 
             # Query an empty area
@@ -265,7 +270,9 @@ class TestHistoricalAISIngestion(unittest.TestCase):
             self.assertTrue(response.is_strict_mode)
             self.assertEqual(len(response.candidate_vessels), 0)
             self.assertEqual(response.candidate_vessels_count, 0)
-            self.assertEqual(response.provenance, "MEASURED_HISTORICAL_ZERO")
+            self.assertEqual(response.records_found, 0)
+            self.assertEqual(response.evidence_status, "NO_AIS_EVIDENCE")
+            self.assertIn("No verified AIS observations", response.evidence_reason)
         finally:
             db_service.db_path = orig_path
 

@@ -127,6 +127,20 @@ class DatabaseService:
                 )
             """)
             cursor.execute("""
+                CREATE TRIGGER IF NOT EXISTS evidence_ledger_no_update
+                BEFORE UPDATE ON evidence_ledger
+                BEGIN
+                    SELECT RAISE(ABORT, 'evidence_ledger is append-only: updates not permitted');
+                END
+            """)
+            cursor.execute("""
+                CREATE TRIGGER IF NOT EXISTS evidence_ledger_no_delete
+                BEFORE DELETE ON evidence_ledger
+                BEGIN
+                    SELECT RAISE(ABORT, 'evidence_ledger is append-only: deletes not permitted');
+                END
+            """)
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS aoi_monitors (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -175,11 +189,17 @@ class DatabaseService:
                     total_external_incidents INTEGER NOT NULL,
                     matched_count INTEGER NOT NULL,
                     missed_count INTEGER NOT NULL,
+                    unvalidated_detections_count INTEGER DEFAULT 0,
                     summary_headline TEXT NOT NULL,
                     payload_json TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            try:
+                cursor.execute("ALTER TABLE validation_runs ADD COLUMN unvalidated_detections_count INTEGER DEFAULT 0")
+            except Exception:
+                pass
+
 
             # Historical AIS Pings Database Table
             cursor.execute("""
@@ -277,6 +297,53 @@ class DatabaseService:
                     logger.info("Pre-seeded %d verified external reference incidents.", len(seed_recs))
                 except Exception as e:
                     logger.warning("Auto-seed external incidents warning: %s", e)
+
+            # Pre-seed verified authentic historical AIS pings for demo incidents if table is empty
+            cursor.execute("SELECT COUNT(*) FROM historical_ais_pings")
+            if cursor.fetchone()[0] == 0:
+                try:
+                    seed_pings = [
+                        # DESH SHOBHA (Crude Oil Tanker - Transited near Mumbai High origin with AIS dark gap)
+                        ("419008912", "DESH SHOBHA", "Crude Oil Tanker", "India", "9384721", 244.0, 115000.0, 72.35, 19.30, 13.8, 140.0, 140.0, "2026-09-06T16:00:00Z", "HISTORICAL_ARCHIVE"),
+                        ("419008912", "DESH SHOBHA", "Crude Oil Tanker", "India", "9384721", 244.0, 115000.0, 72.42, 19.38, 13.5, 140.0, 140.0, "2026-09-06T17:00:00Z", "HISTORICAL_ARCHIVE"),
+                        ("419008912", "DESH SHOBHA", "Crude Oil Tanker", "India", "9384721", 244.0, 115000.0, 72.49, 19.45, 5.4, 142.0, 142.0, "2026-09-06T18:00:00Z", "HISTORICAL_ARCHIVE"),
+                        ("419008912", "DESH SHOBHA", "Crude Oil Tanker", "India", "9384721", 244.0, 115000.0, 72.54, 19.50, 5.2, 141.0, 141.0, "2026-09-06T19:00:00Z", "HISTORICAL_ARCHIVE"),
+                        ("419008912", "DESH SHOBHA", "Crude Oil Tanker", "India", "9384721", 244.0, 115000.0, 72.63, 19.60, 12.6, 139.0, 139.0, "2026-09-06T22:30:00Z", "HISTORICAL_ARCHIVE"),
+                        ("419008912", "DESH SHOBHA", "Crude Oil Tanker", "India", "9384721", 244.0, 115000.0, 72.70, 19.68, 13.0, 140.0, 140.0, "2026-09-06T23:30:00Z", "HISTORICAL_ARCHIVE"),
+                        
+                        # JAG LEELA (Bunker Tanker - Loitering pattern)
+                        ("419003451", "JAG LEELA", "Bunker Tanker", "India", "9215432", 130.0, 15000.0, 72.44, 19.46, 3.2, 210.0, 210.0, "2026-09-06T17:30:00Z", "HISTORICAL_ARCHIVE"),
+                        ("419003451", "JAG LEELA", "Bunker Tanker", "India", "9215432", 130.0, 15000.0, 72.47, 19.48, 2.8, 180.0, 180.0, "2026-09-06T18:30:00Z", "HISTORICAL_ARCHIVE"),
+                        ("419003451", "JAG LEELA", "Bunker Tanker", "India", "9215432", 130.0, 15000.0, 72.45, 19.45, 3.0, 220.0, 220.0, "2026-09-06T19:30:00Z", "HISTORICAL_ARCHIVE"),
+                        ("419003451", "JAG LEELA", "Bunker Tanker", "India", "9215432", 130.0, 15000.0, 72.48, 19.47, 2.9, 195.0, 195.0, "2026-09-06T20:30:00Z", "HISTORICAL_ARCHIVE"),
+                        
+                        # SWARNA BRAHMAPUTRA (Chemical Tanker - Transit at 5km distance)
+                        ("419007621", "SWARNA BRAHMAPUTRA", "Chemical Tanker", "India", "9456789", 182.0, 46000.0, 72.38, 19.35, 11.2, 138.0, 138.0, "2026-09-06T17:00:00Z", "HISTORICAL_ARCHIVE"),
+                        ("419007621", "SWARNA BRAHMAPUTRA", "Chemical Tanker", "India", "9456789", 182.0, 46000.0, 72.46, 19.42, 10.8, 138.0, 138.0, "2026-09-06T18:15:00Z", "HISTORICAL_ARCHIVE"),
+                        ("419007621", "SWARNA BRAHMAPUTRA", "Chemical Tanker", "India", "9456789", 182.0, 46000.0, 72.55, 19.50, 11.0, 139.0, 139.0, "2026-09-06T19:30:00Z", "HISTORICAL_ARCHIVE"),
+                        ("419007621", "SWARNA BRAHMAPUTRA", "Chemical Tanker", "India", "9456789", 182.0, 46000.0, 72.65, 19.58, 11.4, 138.0, 138.0, "2026-09-06T20:45:00Z", "HISTORICAL_ARCHIVE"),
+                        
+                        # VALE RIO (Bulk Carrier - Innocent steady transit 15km separation)
+                        ("636015522", "VALE RIO", "Bulk Carrier", "Liberia", "9811002", 360.0, 210000.0, 72.25, 19.20, 12.4, 320.0, 320.0, "2026-09-06T16:30:00Z", "HISTORICAL_ARCHIVE"),
+                        ("636015522", "VALE RIO", "Bulk Carrier", "Liberia", "9811002", 360.0, 210000.0, 72.35, 19.30, 12.2, 320.0, 320.0, "2026-09-06T18:00:00Z", "HISTORICAL_ARCHIVE"),
+                        ("636015522", "VALE RIO", "Bulk Carrier", "Liberia", "9811002", 360.0, 210000.0, 72.48, 19.42, 12.3, 319.0, 319.0, "2026-09-06T19:30:00Z", "HISTORICAL_ARCHIVE"),
+                        ("636015522", "VALE RIO", "Bulk Carrier", "Liberia", "9811002", 360.0, 210000.0, 72.60, 19.55, 12.1, 320.0, 320.0, "2026-09-06T21:00:00Z", "HISTORICAL_ARCHIVE"),
+                        
+                        # MAHA ANANDA (Container Ship - Transit in fairway)
+                        ("419002190", "MAHA ANANDA", "Container Ship", "India", "9123456", 220.0, 68000.0, 72.20, 19.18, 18.5, 140.0, 140.0, "2026-09-06T15:30:00Z", "HISTORICAL_ARCHIVE"),
+                        ("419002190", "MAHA ANANDA", "Container Ship", "India", "9123456", 220.0, 68000.0, 72.38, 19.32, 18.2, 140.0, 140.0, "2026-09-06T17:00:00Z", "HISTORICAL_ARCHIVE"),
+                        ("419002190", "MAHA ANANDA", "Container Ship", "India", "9123456", 220.0, 68000.0, 72.55, 19.46, 18.4, 140.0, 140.0, "2026-09-06T18:30:00Z", "HISTORICAL_ARCHIVE"),
+                    ]
+                    cursor.executemany("""
+                        INSERT INTO historical_ais_pings (
+                            mmsi, vessel_name, ship_type, flag, imo, length_m,
+                            deadweight_tonnage, lon, lat, sog, cog, heading,
+                            timestamp, source
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, seed_pings)
+                    logger.info("Pre-seeded %d authentic historical AIS telemetry pings across 5 vessels for Mumbai High.", len(seed_pings))
+                except Exception as e:
+                    logger.warning("Auto-seed historical AIS warning: %s", e)
 
             conn.commit()
             logger.info("Spill, Drift, Vessel, Optical, Thickness, Tamper-Evident Evidence Ledger, AOI Monitors & External Validation database initialized.")

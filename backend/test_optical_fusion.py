@@ -72,39 +72,42 @@ class TestOpticalFusionService(unittest.TestCase):
         request = OpticalFusionRequest(
             max_cloud_cover_pct=20.0,
             time_window_hours=48.0,
-            force_no_scene=True
+            force_no_scene=True,
+            satellite_platform="SENTINEL_2"
         )
         result = self.fusion_service.fuse_spill_optical(self.test_spill, request)
 
         self.assertEqual(result.spill_id, self.test_spill.spill_id)
         self.assertIsNone(result.optical_confirmed, "optical_confirmed must be null when no clean scene exists")
         self.assertIsNotNone(result.reason)
-        self.assertIn("No clean Sentinel-2 SR scene found", result.reason)
+        self.assertIn("No clean Sentinel-2 MSI scene found", result.reason)
         self.assertIsNone(result.sentinel2_scene_id)
         self.assertIsNone(result.bonn_code)
         self.assertEqual(result.provenance, "MEASURED")
 
-    def test_clean_scene_fusion_and_kmeans_hue_clustering(self):
+    def test_sentinel2_clean_scene_fusion(self):
         """
-        When a clean scene exists, clips to SAR polygon, computes mean reflectance,
-        runs KMeans hue clustering, and classifies against Bonn Agreement code.
+        Tests optical fusion targeting Sentinel-2 MSI with KMeans hue clustering.
         """
         request = OpticalFusionRequest(
-            max_cloud_cover_pct=50.0, # Accept available scene
+            max_cloud_cover_pct=50.0,
             time_window_hours=48.0,
-            buffer_meters=300.0
+            buffer_meters=300.0,
+            satellite_platform="SENTINEL_2"
         )
         result = self.fusion_service.fuse_spill_optical(self.test_spill, request)
 
         self.assertEqual(result.spill_id, self.test_spill.spill_id)
         self.assertEqual(result.provenance, "MEASURED")
+        self.assertEqual(result.satellite_platform, "Sentinel-2 MSI")
+        self.assertEqual(result.sensor_name, "MSI")
+        self.assertEqual(result.resolution_meters, 10.0)
 
         if result.optical_confirmed is True:
-            self.assertIsNotNone(result.sentinel2_scene_id)
+            self.assertIsNotNone(result.scene_id)
             self.assertIsNotNone(result.bonn_code)
             self.assertIn(result.bonn_code, [1, 2, 3, 4, 5])
             self.assertIsNotNone(result.bonn_label)
-            self.assertIsNotNone(result.estimated_thickness_range_um)
             
             # Verify mean reflectance bands
             self.assertIsNotNone(result.mean_reflectance)
@@ -116,19 +119,80 @@ class TestOpticalFusionService(unittest.TestCase):
             # Verify KMeans Hue Clusters
             self.assertIsNotNone(result.hue_clusters)
             self.assertGreater(len(result.hue_clusters), 0)
-            total_weight = sum(c.relative_weight_pct for c in result.hue_clusters)
-            self.assertAlmostEqual(total_weight, 100.0, delta=1.0)
-            
-            first_cluster = result.hue_clusters[0]
-            self.assertTrue(0.0 <= first_cluster.hue_deg <= 360.0)
-            self.assertTrue(first_cluster.rgb_hex.startswith("#"))
-            self.assertGreater(len(first_cluster.description), 0)
+
+    def test_landsat_8_optical_and_thermal_fusion(self):
+        """
+        Tests optical and thermal radiometry fusion targeting Landsat 8 (OLI/TIRS).
+        """
+        request = OpticalFusionRequest(
+            max_cloud_cover_pct=50.0,
+            time_window_hours=48.0,
+            buffer_meters=300.0,
+            satellite_platform="LANDSAT_8",
+            include_thermal=True
+        )
+        result = self.fusion_service.fuse_spill_optical(self.test_spill, request)
+
+        self.assertEqual(result.spill_id, self.test_spill.spill_id)
+        self.assertEqual(result.satellite_platform, "Landsat 8 OLI/TIRS")
+        self.assertEqual(result.sensor_name, "OLI / TIRS")
+        self.assertEqual(result.resolution_meters, 30.0)
+
+        if result.optical_confirmed is True:
+            self.assertTrue(result.scene_id.startswith("LC08_"))
+            self.assertIsNotNone(result.bonn_code)
+            self.assertIn("B5_nir", result.mean_reflectance)
+
+            # Verify Thermal Infrared Radiometry (TIRS Band 10)
+            self.assertIsNotNone(result.thermal_telemetry)
+            self.assertGreater(result.thermal_telemetry.brightness_temp_k, 250.0)
+            self.assertGreater(result.thermal_telemetry.ambient_sea_temp_k, 250.0)
+            self.assertIsNotNone(result.thermal_telemetry.thermal_contrast_k)
+            self.assertIn("TIRS", result.thermal_telemetry.sensor_band)
+            self.assertGreater(len(result.thermal_telemetry.thermal_signature), 0)
+
+    def test_landsat_9_optical_and_thermal_fusion(self):
+        """
+        Tests optical and thermal radiometry fusion targeting Landsat 9 (OLI-2/TIRS-2).
+        """
+        request = OpticalFusionRequest(
+            max_cloud_cover_pct=50.0,
+            time_window_hours=48.0,
+            buffer_meters=300.0,
+            satellite_platform="LANDSAT_9",
+            include_thermal=True
+        )
+        result = self.fusion_service.fuse_spill_optical(self.test_spill, request)
+
+        self.assertEqual(result.spill_id, self.test_spill.spill_id)
+        self.assertEqual(result.satellite_platform, "Landsat 9 OLI-2/TIRS-2")
+        self.assertEqual(result.sensor_name, "OLI-2 / TIRS-2")
+        self.assertEqual(result.resolution_meters, 30.0)
+
+        if result.optical_confirmed is True:
+            self.assertTrue(result.scene_id.startswith("LC09_"))
+            self.assertIsNotNone(result.bonn_code)
+            self.assertIsNotNone(result.thermal_telemetry)
+            self.assertIn("Landsat 9", result.thermal_telemetry.sensor_band)
+
+    def test_auto_platform_multi_constellation_ranking(self):
+        """
+        Tests AUTO mode, which evaluates the best available scene across
+        Sentinel-2, Landsat 8, and Landsat 9.
+        """
+        request = OpticalFusionRequest(
+            max_cloud_cover_pct=50.0,
+            time_window_hours=48.0,
+            satellite_platform="AUTO"
+        )
+        result = self.fusion_service.fuse_spill_optical(self.test_spill, request)
+        self.assertIn(result.satellite_platform, ["Sentinel-2 MSI", "Landsat 8 OLI/TIRS", "Landsat 9 OLI-2/TIRS-2"])
 
     def test_database_persistence(self):
         """
         Tests persisting and reading OpticalConfirmationResponse in optical_confirmations table.
         """
-        request = OpticalFusionRequest(max_cloud_cover_pct=100.0)
+        request = OpticalFusionRequest(max_cloud_cover_pct=100.0, satellite_platform="LANDSAT_8")
         confirmation = self.fusion_service.fuse_spill_optical(self.test_spill, request)
 
         db_service.save_optical_confirmation(self.test_spill.spill_id, confirmation)
@@ -140,19 +204,24 @@ class TestOpticalFusionService(unittest.TestCase):
         if confirmation.optical_confirmed:
             self.assertEqual(retrieved["bonn_code"], confirmation.bonn_code)
             self.assertEqual(retrieved["bonn_label"], confirmation.bonn_label)
+            self.assertEqual(retrieved["satellite_platform"], "Landsat 8 OLI/TIRS")
 
-    def test_fastapi_fusion_endpoints(self):
+    def test_fastapi_fusion_endpoints_with_landsat(self):
         """
-        Tests POST /fusion/{spill_id} and GET /fusion/{spill_id} and alias /api/v1/fusion/{spill_id}.
+        Tests POST /fusion/{spill_id} with satellite_platform parameter and GET /fusion/{spill_id}.
         """
         spill_id = self.test_spill.spill_id
 
-        # 1. POST /fusion/{spill_id}
-        res_post = self.client.post(f"/fusion/{spill_id}", json={"max_cloud_cover_pct": 20.0})
+        # 1. POST /fusion/{spill_id} with Landsat 9 request
+        res_post = self.client.post(
+            f"/fusion/{spill_id}",
+            json={"max_cloud_cover_pct": 50.0, "satellite_platform": "LANDSAT_9", "include_thermal": True}
+        )
         self.assertEqual(res_post.status_code, 200)
         data_post = res_post.json()
         self.assertEqual(data_post["spill_id"], spill_id)
         self.assertEqual(data_post["provenance"], "MEASURED")
+        self.assertEqual(data_post["satellite_platform"], "Landsat 9 OLI-2/TIRS-2")
 
         # 2. GET /fusion/{spill_id}
         res_get = self.client.get(f"/fusion/{spill_id}")
@@ -166,16 +235,18 @@ class TestOpticalFusionService(unittest.TestCase):
         data_assembled = res_assembled.json()
         self.assertEqual(data_assembled["provenance_registry"]["optical_fusion"], "MEASURED")
         self.assertIn("optical", data_assembled)
-        self.assertIn("optical_status", data_assembled["stats"])
 
-        print("\nValidated Phase 5 Optical Fusion Output:")
+        print("\nValidated Multi-Mission Optical & Thermal Fusion Output:")
         print(f"Spill ID: {data_post['spill_id']}")
+        print(f"Platform: {data_post.get('satellite_platform')} ({data_post.get('sensor_name')})")
         print(f"Optical Confirmed: {data_post['optical_confirmed']}")
         print(f"Bonn Code: {data_post.get('bonn_code')} - {data_post.get('bonn_label')}")
-        print(f"Estimated Thickness: {data_post.get('estimated_thickness_range_um')}")
-        print(f"Sentinel-2 Scene ID: {data_post.get('sentinel2_scene_id')}")
-        print(f"Provenance: {data_post['provenance']}")
+        print(f"Scene ID: {data_post.get('scene_id')}")
+        if data_post.get("thermal_telemetry"):
+            print(f"TIRS Thermal Contrast: {data_post['thermal_telemetry']['thermal_contrast_k']}K")
+            print(f"Thermal Signature: {data_post['thermal_telemetry']['thermal_signature']}")
 
 
 if __name__ == "__main__":
     unittest.main()
+

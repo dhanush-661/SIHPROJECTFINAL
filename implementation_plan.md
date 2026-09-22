@@ -1,99 +1,123 @@
-# Validation & Incident Database Module Implementation Plan
+# Landsat 8 & Landsat 9 Satellite Integration Implementation Plan
 
-## Overview
-This module creates a dedicated **Validation & Incident Database** layer in AquaSentinel. It ingests known real-world oil-spill incidents from public external satellite-surveillance feeds and reference catalogs (such as SkyTruth / Cerulean, NOAA MPSR, CleanSeaNet, and verified historical ground-truth records) **strictly** for auditing and validating the accuracy of AquaSentinel's own Sentinel-1 detection pipeline.
+This plan outlines the architecture and changes required to integrate **USGS / NASA Landsat 8 (OLI/TIRS)** and **Landsat 9 (OLI-2/TIRS-2)** satellites into AquaSentinel, alongside the existing **Copernicus Sentinel-1 (C-SAR)** and **Sentinel-2 (MSI)** pipelines.
 
-### Core Framing Rules
-1. **Never Presented as a Detection Source**: Live AOI Monitoring remains the primary automated detection engine. This module exists exclusively to prove detection credibility against real-world data.
-2. **Clear Provenance Tagging**: All external data is tagged `EXTERNAL-REFERENCE` (distinct from `DETECTED`, `MEASURED`, `MODEL-PREDICTED`, `ANOMALY-FLAGGED`, `VERIFIED`).
-3. **Database Separation**: External reference incidents are persisted in a dedicated `external_incidents` table and never mixed into the `oil_spills` operational table.
-4. **Honest Metric Reporting**: No deceptive "99.9% precision/recall" claims on small incident samples. Instead, plain counts and clear match/miss summaries are presented (e.g. "5 of 6 known reference incidents in monitored AOIs were matched by AquaSentinel's own detection").
-5. **Accurate Terminology**: Copy across all pages refers to Live AOI Monitoring as "Automated continuous monitoring of newly available Sentinel-1 acquisitions over user-defined AOIs" (not "24/7 real-time monitoring").
+---
+
+## Architecture & Satellite Constellation Overview
+
+| Satellite Platform | Sensor / Payload | Spatial Resolution | Key Spectral Bands & Radiometry | Role in AquaSentinel |
+| :--- | :--- | :--- | :--- | :--- |
+| **Sentinel-1 (A/B/C)** *(Copernicus)* | C-band Synthetic Aperture Radar (C-SAR) | 10m - 20m | VV/VH Microwave Backscatter (5.405 GHz) | **Primary Detection & Thickness**: Day/night, all-weather dark spot segmentation, backscatter contrast, GLCM texture. |
+| **Sentinel-2 (A/B/C)** *(Copernicus)* | Multispectral Instrument (MSI) | 10m / 20m | B2 (Blue), B3 (Green), B4 (Red), B8 (NIR) | **High-Res Optical Cross-Check**: 10m true-color, NDWI/NDVI land masking, KMeans hue/color clustering & Bonn Agreement (BAOAC 1-5). |
+| **Landsat 8** *(USGS / NASA)* | OLI (Operational Land Imager) + TIRS (Thermal Infrared) | 30m Optical / 100m Thermal | B2 (Blue), B3 (Green), B4 (Red), B5 (NIR), B10 (Thermal IR 10.6–11.19 µm) | **Optical & Thermal Radiometry**: Multi-spectral cross-validation + Thermal emissivity anomaly detection (solar absorption heating vs ambient sea). |
+| **Landsat 9** *(USGS / NASA)* | OLI-2 + TIRS-2 | 30m Optical / 100m Thermal (14-bit radiometric precision) | B2 (Blue), B3 (Green), B4 (Red), B5 (NIR), B10 (Thermal IR 10.6–11.19 µm) | **Next-Gen Optical/Thermal Fusion**: 14-bit improved signal-to-noise ratio, reduces revisit interval when combined with S2 and L8 to ~2-3 days. |
+
+---
+
+## Key Benefits of Sentinel-1 + Sentinel-2 + Landsat-8 + Landsat-9 Constellation
+
+1. **Drastically Reduced Optical Revisit Interval**: Combining Sentinel-2 (5-day revisit) with Landsat 8 and Landsat 9 (8-day offset, 16-day orbit) shortens optical revisit over any coastal/marine AOI to **~2.3 days average**, greatly reducing the probability that cloud cover prevents confirmation.
+2. **Thermal Infrared Radiometry (TIRS Band 10)**: Landsat 8 and 9 measure surface brightness temperature ($ST\_B10$). Thick hydrocarbon emulsions absorb solar radiation differently than clean seawater, creating detectable thermal anomalies ($\Delta T \approx +0.8\text{K to }+3.2\text{K}$ during daytime solar heating, or slight evaporative cooling at night), providing a physical thickness cross-check.
+3. **Multi-Mission Sensor Selection**: Users can choose **Auto (Best Available Scene)** or specifically target **Sentinel-2 MSI**, **Landsat 8 OLI/TIRS**, or **Landsat 9 OLI-2/TIRS-2**.
 
 ---
 
 ## Proposed Changes
 
-### Phase 1: External Incident Ingestion Service & Schemas
+### 1. Backend Schemas & Data Models
 
-#### [NEW] [validation.py](file:///c:/Users/dhanu/SIH7926/backend/app/schemas/validation.py)
-- Pydantic models for `ExternalIncident`, `ExternalIncidentCreate`, `ExternalIncidentImportRequest`, `ValidationRunRequest`, `ValidationComparisonRecord`, `ValidationRunResponse`.
+#### [MODIFY] [fusion.py](file:///c:/Users/dhanu/SIH7926/backend/app/schemas/fusion.py)
+- Update `OpticalFusionRequest`:
+  - `satellite_platform`: Optional enum/string (`"AUTO"`, `"SENTINEL_2"`, `"LANDSAT_8"`, `"LANDSAT_9"`). Default: `"AUTO"`.
+  - `include_thermal`: Optional bool (enables Landsat TIRS Band 10 thermal radiometry analysis). Default: `True`.
+- Add `ThermalTelemetry` model:
+  - `brightness_temp_k`: Surface temperature over slick in Kelvin.
+  - `ambient_sea_temp_k`: Ambient background sea surface temperature in Kelvin.
+  - `thermal_contrast_k`: $\Delta T$ (slick temp - ambient sea temp).
+  - `thermal_signature`: Human-readable interpretation (e.g., *"Solar absorption heating (+1.8K) indicates thick emulsified core"*).
+- Update `OpticalConfirmationResponse`:
+  - `satellite_platform`: Name of satellite used (`"Sentinel-2 MSI"`, `"Landsat 8 OLI/TIRS"`, `"Landsat 9 OLI-2/TIRS-2"`).
+  - `sensor_name`: Sensor identifier (`"MSI"`, `"OLI"`, `"OLI-2"`, `"TIRS"`).
+  - `scene_id`: Canonical product/granule ID (retains `sentinel2_scene_id` for backward compatibility).
+  - `resolution_meters`: Ground spatial resolution (e.g. 10m for Sentinel-2, 30m for Landsat OLI).
+  - `thermal_telemetry`: Optional `ThermalTelemetry` object populated when Landsat 8/9 is utilized.
 
-#### [NEW] [external_incident_service.py](file:///c:/Users/dhanu/SIH7926/backend/app/services/external_incident_service.py)
-- Ingests real-world incidents from public sources / Cerulean feeds and provides fallback import of GeoJSON/CSV.
-- Pre-seeds verified high-confidence real-world reference incidents (e.g., MV Wakashio Mauritius, Dawn Kanchipuram Ennore/Chennai, Taylor Energy / Gulf of Mexico, Malacca Strait bilge dumping, Red Sea tanker spills).
-- Normalizes all external incidents to the `EXTERNAL-REFERENCE` schema.
+---
+
+### 2. Backend Services & GEE Engine
+
+#### [MODIFY] [optical_fusion_service.py](file:///c:/Users/dhanu/SIH7926/backend/app/services/optical_fusion_service.py)
+- Support Earth Engine (GEE) collections for:
+  - Sentinel-2: `COPERNICUS/S2_SR_HARMONIZED` (B2, B3, B4, B8)
+  - Landsat 8: `LANDSAT/LC08/C02/T1_L2` (SR_B2, SR_B3, SR_B4, SR_B5, ST_B10)
+  - Landsat 9: `LANDSAT/LC09/C02/T1_L2` (SR_B2, SR_B3, SR_B4, SR_B5, ST_B10)
+- Add Landsat-specific spectral processing:
+  - Landsat NDWI = $(SR\_B3_{green} - SR\_B5_{nir}) / (SR\_B3_{green} + SR\_B5_{nir})$
+  - Landsat NDVI = $(SR\_B5_{nir} - SR\_B4_{red}) / (SR\_B5_{nir} + SR\_B4_{red})$
+  - Landsat TIRS thermal processing: Kelvin surface temperature scaling ($ST\_B10 \times 0.00341802 + 149.0$) and thermal contrast $\Delta T$.
+- Implement `AUTO` mode sensor ranking: searches across Sentinel-2, Landsat-8, and Landsat-9, choosing the lowest cloud-cover scene closest to the SAR detection time.
+- Update realistic high-fidelity simulation engine to produce realistic Landsat 8/9 product IDs (e.g. `LC08_L2SP_148047_20260906_02_T1` and `LC09_L2SP_148047_20260904_02_T1`), 30m resolution reflectance distributions, and TIRS thermal radiometry.
 
 #### [MODIFY] [db_service.py](file:///c:/Users/dhanu/SIH7926/backend/app/services/db_service.py)
-- Add `external_incidents` and `validation_runs` SQLite tables.
-- Add query, import, and retrieval methods filterable by bounding box and date range.
+- Update `optical_confirmations` table schema to store `satellite_platform`, `scene_id`, and `thermal_telemetry_json`.
+- Maintain backward compatibility for queries fetching `sentinel2_scene_id`.
+
+#### [MODIFY] [evidence_service.py](file:///c:/Users/dhanu/SIH7926/backend/app/services/evidence_service.py)
+- Record multi-satellite platform provenance (`Sentinel-2 MSI`, `Landsat 8 OLI/TIRS`, `Landsat 9 OLI-2/TIRS-2`) in the cryptographically chained evidence ledger.
 
 #### [MODIFY] [main.py](file:///c:/Users/dhanu/SIH7926/backend/app/main.py)
-- Add endpoints:
-  - `GET /api/v1/external-incidents`: List/filter external reference incidents.
-  - `POST /api/v1/external-incidents/import`: Import GeoJSON/JSON reference records.
-  - `POST /api/v1/external-incidents/seed`: Seed reference dataset.
+- Update `/api/v1/fusion/{spill_id}` endpoint and docs to reflect multi-mission Sentinel & Landsat satellite constellation support.
 
 ---
 
-### Phase 2: Validation Matching Logic
+### 3. Frontend UI & Multi-Sensor Visualizations
 
-#### [NEW] [validation_service.py](file:///c:/Users/dhanu/SIH7926/backend/app/services/validation_service.py)
-- Compares AquaSentinel's own detections from `spills` table against `external_incidents` for an AOI and configurable time window (+/- 48h default) and spatial threshold (15 km default).
-- Classifies each record into:
-  - `MATCHED`: AquaSentinel detected the slick, and the external reference confirmed it.
-  - `MISSED`: External source reported a spill in the monitored AOI, but AquaSentinel did not detect it (flagged false negative).
-  - `UNVALIDATED_DETECTION`: AquaSentinel detected a candidate spill with no external reference record (flagged for manual review).
-- Computes honest plain counts and summary statements.
+#### [MODIFY] [types/forensics.ts](file:///c:/Users/dhanu/SIH7926/frontend/src/types/forensics.ts)
+- Add `ThermalTelemetry` interface.
+- Update `OpticalConfirmationResult` with `satellite_platform`, `sensor_name`, `scene_id`, `resolution_meters`, `thermal_telemetry`.
 
-#### [MODIFY] [main.py](file:///c:/Users/dhanu/SIH7926/backend/app/main.py)
-- Add endpoints:
-  - `POST /api/v1/validation/run`: Execute a validation matching run for an AOI and date range.
-  - `GET /api/v1/validation/results`: Retrieve previous validation runs.
+#### [MODIFY] [services/api.ts](file:///c:/Users/dhanu/SIH7926/frontend/src/services/api.ts)
+- Update `runOpticalFusion` to accept `satellite_platform` and `include_thermal` parameters.
 
----
+#### [MODIFY] [DetectionFusionPage.tsx](file:///c:/Users/dhanu/SIH7926/frontend/src/components/Pages/DetectionFusionPage.tsx)
+- Add **Satellite Mission Selector**:
+  - `Auto (Best Revisit)`
+  - `Sentinel-2 MSI (10m · ESA)`
+  - `Landsat 8 OLI/TIRS (30m+Thermal · USGS)`
+  - `Landsat 9 OLI-2/TIRS-2 (30m+Thermal · USGS)`
+- Add **Landsat Thermal Infrared (TIRS Band 10) Telemetry Panel**:
+  - Displays Brightness Temperature ($K$ and $^\circ\text{C}$), Ambient Sea Temp, and Thermal Contrast ($\Delta T$).
+  - Color-coded thermal emissivity status bar (indicating thick emulsified core heating vs thin sheen).
+- Add Constellation Banner showcasing 4-satellite coverage: Sentinel-1 SAR + Sentinel-2 MSI + Landsat-8 + Landsat-9.
 
-### Phase 3: Validation Dashboard UI
+#### [MODIFY] [OpticalFusionPanel.tsx](file:///c:/Users/dhanu/SIH7926/frontend/src/components/Forensics/OpticalFusionPanel.tsx)
+- Integrate Satellite Selector dropdown/toggle (Auto, Sentinel-2, Landsat 8, Landsat 9).
+- Render satellite badges (Copernicus ESA vs USGS NASA) and Thermal Infrared section when Landsat is selected or confirmed.
 
-#### [NEW] [ValidationPage.tsx](file:///c:/Users/dhanu/SIH7926/frontend/src/components/Pages/ValidationPage.tsx)
-- Prominent header card explaining that this is a validation & credibility feature testing AquaSentinel's pipeline against public ground-truth incidents.
-- Interactive Map showing:
-  - AquaSentinel Detections (solid cyan/blue `#00f0ff` polygon).
-  - External Reference Incidents (neutral amber/grey dashed outline tagged `EXTERNAL-REFERENCE`).
-- Results table with match status badges (`MATCHED`, `MISSED`, `UNVALIDATED_DETECTION`), distance offsets, time deltas, and external source traceability links.
-- "Re-run Validation" button + Preset / Date Selector.
-- "Seed Reference Incidents" / "Import Incidents" modal.
-
-#### [MODIFY] [Sidebar.tsx](file:///c:/Users/dhanu/SIH7926/frontend/src/components/Navigation/Sidebar.tsx) & [App.tsx](file:///c:/Users/dhanu/SIH7926/frontend/src/App.tsx)
-- Add `validation` to `AppPage` navigation items with a distinct icon (`CheckCircle2` / `ShieldCheck`).
-- Route rendering for `ValidationPage`.
-
-#### [MODIFY] [api.ts](file:///c:/Users/dhanu/SIH7926/frontend/src/services/api.ts) & [types](file:///c:/Users/dhanu/SIH7926/frontend/src/types/)
-- Add API client calls and TypeScript types for `ExternalIncident`, `ValidationRunResponse`, etc.
-
----
-
-### Phase 4: Copy Audit & Positioning Verification
-
-#### [MODIFY] Copy across frontend & backend
-- Review headers, modals, tooltips, and pitch copy to ensure Live AOI Monitoring is accurately positioned as:
-  *"Automated continuous monitoring of newly available Sentinel-1 acquisitions over user-defined AOIs"* (never "24/7 real-time monitoring").
-- Ensure no WebSocket/live-alert channel streams external reference incidents.
-
-#### [NEW] [test_validation_module.py](file:///c:/Users/dhanu/SIH7926/backend/test_validation_module.py)
-- Tests for:
-  1. External incident ingestion and normalization (`EXTERNAL-REFERENCE` provenance).
-  2. Database isolation (external incidents never inserted into `oil_spills`).
-  3. Spatial & temporal matching logic asserting correct classification of `MATCHED`, `MISSED`, and `UNVALIDATED_DETECTION`.
-  4. Real-world incident validation pass (e.g. Ennore, Wakashio, Mumbai High, Malacca Strait).
+#### [MODIFY] [TopBar.tsx](file:///c:/Users/dhanu/SIH7926/frontend/src/components/Navigation/TopBar.tsx) & [Sidebar.tsx](file:///c:/Users/dhanu/SIH7926/frontend/src/components/Navigation/Sidebar.tsx)
+- Update satellite constellation status indicators to reflect Copernicus (Sentinel-1, Sentinel-2) & USGS (Landsat 8, Landsat 9) multi-sensor telemetry.
 
 ---
 
 ## Verification Plan
 
-### Automated Backend Tests
-- Run `test_validation_module.py` covering ingestion, database isolation, matching algorithms, and API endpoints.
-- Run full backend test suite (`python -m unittest discover -s . -p "test_*.py"`) to ensure 0 regressions.
+### Automated Tests
+1. **Unit & Integration Tests**:
+   - Run `python -m unittest test_optical_fusion.py` in `backend/`.
+   - Add test cases in `test_optical_fusion.py` validating:
+     - Landsat 8 OLI/TIRS optical + thermal fusion.
+     - Landsat 9 OLI-2/TIRS-2 optical + thermal fusion.
+     - Sentinel-2 MSI optical fusion.
+     - `AUTO` multi-satellite scene selection.
+     - Land masking (NDWI/NDVI) across Landsat 8/9 band definitions.
+     - Database persistence and backward compatibility.
+2. **Frontend Typecheck & Build**:
+   - Run `npm run build` or `npx tsc --noEmit` in `frontend/` to verify zero TypeScript errors.
 
-### Frontend Verification
-- Open `http://localhost:5173`, navigate to the new **Incident Validation** page, execute a validation pass over Mumbai High, Malacca Strait, and Ennore, and verify visual rendering of comparison markers, match badges, and summary counts.
+### Manual Verification
+1. Launch AquaSentinel frontend & backend.
+2. Navigate to **SAR & Optical Fusion** page.
+3. Switch between **Auto**, **Sentinel-2**, **Landsat 8**, and **Landsat 9** satellite selectors and trigger Optical Fusion.
+4. Verify that Landsat 8 and Landsat 9 display the 30m resolution metadata, band reflectance, and TIRS Thermal Infrared telemetry ($\Delta T$ and surface temp).
+5. Verify that Bonn Agreement classification and hue clustering update accurately.

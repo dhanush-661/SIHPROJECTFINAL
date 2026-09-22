@@ -91,6 +91,7 @@ export const DetectionFusionPage: React.FC<DetectionFusionPageProps> = ({
   onOpticalUpdated,
 }) => {
   const [isLinked, setIsLinked] = useState<boolean>(true);
+  const [selectedPlatform, setSelectedPlatform] = useState<string>('AUTO');
   const [isRunningFusion, setIsRunningFusion] = useState<boolean>(false);
 
   // Note: in spill schema, centroid is [lon, lat] -> Leaflet uses [lat, lon]
@@ -109,16 +110,20 @@ export const DetectionFusionPage: React.FC<DetectionFusionPageProps> = ({
   const [mapZoom, setMapZoom] = useState<number>(12);
 
   useEffect(() => {
-    if (spill?.centroid) {
-      setMapCenter([spill.centroid[1], spill.centroid[0]]);
-    }
-  }, [spill?.spill_id]);
+    setMapCenter(currentCenter);
+  }, [spill]);
 
   const handleRunFusion = async () => {
     if (!spill) return;
     setIsRunningFusion(true);
     try {
-      const res = await runOpticalFusion(spill.spill_id);
+      const res = await runOpticalFusion(spill.spill_id, {
+        satellite_platform: selectedPlatform,
+        include_thermal: true,
+        max_cloud_cover_pct: 20,
+        time_window_hours: 48,
+        buffer_meters: 300,
+      });
       onOpticalUpdated(res);
     } catch (err: any) {
       alert(`Optical fusion failed: ${err.message || err}`);
@@ -152,6 +157,8 @@ export const DetectionFusionPage: React.FC<DetectionFusionPageProps> = ({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '10px',
         }}
       >
         <div>
@@ -167,14 +174,53 @@ export const DetectionFusionPage: React.FC<DetectionFusionPageProps> = ({
             }}
           >
             <Layers size={18} color="var(--navy-primary)" />
-            Multi-Sensor Detection &amp; Optical Fusion
+            Multi-Satellite Detection &amp; Optical/Thermal Fusion
           </h1>
           <p style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
-            Calibrated Sentinel-1 SAR backscatter paired with Sentinel-2 Surface Reflectance true-color validation
+            Copernicus Sentinel-1 C-SAR paired with Sentinel-2 MSI &amp; USGS Landsat 8/9 OLI/TIRS Multi-Spectral &amp; Thermal Radiometry
           </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          {/* Satellite Platform Selector */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            backgroundColor: '#F1F5F9',
+            borderRadius: '6px',
+            padding: '2px',
+            border: '1px solid var(--border-subtle)',
+          }}>
+            {[
+              { id: 'AUTO', label: 'Auto (Best Revisit)' },
+              { id: 'SENTINEL_2', label: 'Sentinel-2 (10m)' },
+              { id: 'LANDSAT_8', label: 'Landsat 8 (30m+TIRS)' },
+              { id: 'LANDSAT_9', label: 'Landsat 9 (30m+TIRS)' },
+            ].map((p) => {
+              const active = selectedPlatform === p.id;
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => setSelectedPlatform(p.id)}
+                  style={{
+                    padding: '4px 8px',
+                    borderRadius: '4px',
+                    backgroundColor: active ? '#FFFFFF' : 'transparent',
+                    border: active ? '1px solid var(--border-subtle)' : '1px solid transparent',
+                    color: active ? 'var(--navy-primary)' : 'var(--text-secondary)',
+                    fontSize: '0.68rem',
+                    fontWeight: active ? 700 : 500,
+                    cursor: 'pointer',
+                    boxShadow: active ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  {p.label}
+                </button>
+              );
+            })}
+          </div>
+
           {/* Synchronize Pan/Zoom Toggle */}
           <button
             onClick={() => setIsLinked(!isLinked)}
@@ -193,7 +239,7 @@ export const DetectionFusionPage: React.FC<DetectionFusionPageProps> = ({
             }}
           >
             {isLinked ? <Link2 size={14} /> : <Unlink2 size={14} />}
-            <span>{isLinked ? 'Maps Synchronized' : 'Maps Unlinked'}</span>
+            <span>{isLinked ? 'Synchronized' : 'Unlinked'}</span>
           </button>
 
           {/* Trigger Optical Fusion Button */}
@@ -218,10 +264,10 @@ export const DetectionFusionPage: React.FC<DetectionFusionPageProps> = ({
             <RotateCw size={13} className={isRunningFusion ? 'animate-spin' : ''} />
             <span>
               {isRunningFusion
-                ? 'Querying GEE S2...'
+                ? `Querying ${selectedPlatform}...`
                 : opticalResult
-                ? 'Re-run Optical Pass'
-                : 'Run S2 Optical Fusion'}
+                ? `Re-run (${selectedPlatform})`
+                : `Run Fusion (${selectedPlatform})`}
             </span>
           </button>
         </div>
@@ -421,7 +467,7 @@ export const DetectionFusionPage: React.FC<DetectionFusionPageProps> = ({
           </div>
         </div>
 
-        {/* Right Panel: Sentinel-2 Optical */}
+        {/* Right Panel: Optical & Thermal Fusion */}
         <div
           className="clinical-card"
           style={{
@@ -444,7 +490,7 @@ export const DetectionFusionPage: React.FC<DetectionFusionPageProps> = ({
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Eye size={15} color="#0D9488" />
               <span style={{ fontSize: '0.80rem', fontWeight: 800, color: 'var(--navy-primary)' }}>
-                Optical Confirmation · Sentinel-2 MSI
+                {opticalResult?.satellite_platform || (selectedPlatform === 'AUTO' ? 'Optical Fusion (Auto)' : selectedPlatform)}
               </span>
               <span
                 className="mono-text"
@@ -456,7 +502,7 @@ export const DetectionFusionPage: React.FC<DetectionFusionPageProps> = ({
                   borderRadius: '4px',
                 }}
               >
-                B2/B3/B4 RGB True-Color
+                {opticalResult?.sensor_name ? `${opticalResult.sensor_name} · ${opticalResult.resolution_meters}m` : 'Multi-Band Vis/NIR'}
               </span>
             </div>
             <ProvenanceBadge type="MEASURED" />
@@ -481,7 +527,7 @@ export const DetectionFusionPage: React.FC<DetectionFusionPageProps> = ({
               >
                 <AlertCircle size={32} color="#94A3B8" style={{ marginBottom: '10px' }} />
                 <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                  No Clear Optical Pass Available
+                  No Clear Optical/Thermal Pass Available
                 </div>
                 <div style={{ fontSize: '0.72rem', maxWidth: '320px', marginTop: '4px' }}>
                   {opticalResult.reason || 'Cloud cover exceeded 20% threshold during the +/- 48h satellite acquisition window.'}
@@ -527,11 +573,17 @@ export const DetectionFusionPage: React.FC<DetectionFusionPageProps> = ({
                     >
                       <Popup>
                         <div style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)' }}>
-                          <strong>Sentinel-2 MSI Optical Match</strong>
+                          <strong>{opticalResult?.satellite_platform || 'Satellite Optical Match'}</strong>
                           <br />
                           Bonn Classification: Code {bonnCode}
                           <br />
                           Cloud Cover: {(opticalResult?.scene_cloud_cover_pct ?? 4.2).toFixed(1)}%
+                          {opticalResult?.thermal_telemetry && (
+                            <>
+                              <br />
+                              Thermal Contrast: {opticalResult.thermal_telemetry.thermal_contrast_k > 0 ? `+${opticalResult.thermal_telemetry.thermal_contrast_k.toFixed(1)}K` : `${opticalResult.thermal_telemetry.thermal_contrast_k.toFixed(1)}K`}
+                            </>
+                          )}
                         </div>
                       </Popup>
                     </Polygon>
@@ -568,9 +620,37 @@ export const DetectionFusionPage: React.FC<DetectionFusionPageProps> = ({
                 backdropFilter: 'blur(6px)',
               }}
             >
-              Cloud Cover: <strong style={{ color: '#2DD4BF' }}>{(opticalResult?.scene_cloud_cover_pct ?? 4.2).toFixed(1)}%</strong> · Pass Δt: {opticalResult?.time_difference_hours !== null && opticalResult?.time_difference_hours !== undefined ? `${opticalResult.time_difference_hours > 0 ? '+' : ''}${opticalResult.time_difference_hours.toFixed(1)}h` : '-2.4h'} · S2 MSI
+              Cloud: <strong style={{ color: '#2DD4BF' }}>{(opticalResult?.scene_cloud_cover_pct ?? 4.2).toFixed(1)}%</strong> · Δt: {opticalResult?.time_difference_hours !== null && opticalResult?.time_difference_hours !== undefined ? `${opticalResult.time_difference_hours > 0 ? '+' : ''}${opticalResult.time_difference_hours.toFixed(1)}h` : '-2.4h'} · {opticalResult?.satellite_platform || 'Optical Pass'}
             </div>
           </div>
+
+          {/* Landsat Thermal Infrared (TIRS Band 10) Strip */}
+          {opticalResult?.thermal_telemetry && (
+            <div
+              style={{
+                padding: '7px 14px',
+                backgroundColor: '#FEF3C7',
+                borderTop: '1px solid #FDE68A',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                fontSize: '0.68rem',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#92400E', fontWeight: 700 }}>
+                <span>🔥 Landsat TIRS Thermal Radiometry:</span>
+                <span className="mono-text" style={{ color: '#B45309', fontWeight: 800 }}>
+                  ΔT = {opticalResult.thermal_telemetry.thermal_contrast_k > 0 ? `+${opticalResult.thermal_telemetry.thermal_contrast_k.toFixed(1)}K` : `${opticalResult.thermal_telemetry.thermal_contrast_k.toFixed(1)}K`}
+                </span>
+                <span style={{ color: '#78350F', fontSize: '0.64rem' }}>
+                  ({opticalResult.thermal_telemetry.brightness_temp_k.toFixed(1)}K surface vs {opticalResult.thermal_telemetry.ambient_sea_temp_k.toFixed(1)}K sea)
+                </span>
+              </div>
+              <span style={{ fontSize: '0.62rem', color: '#B45309', fontWeight: 600 }}>
+                TIRS Band 10 (10.6-11.19 µm)
+              </span>
+            </div>
+          )}
 
           {/* Prominent Bonn Agreement Oil Appearance Code Strip */}
           <div
@@ -665,19 +745,19 @@ export const DetectionFusionPage: React.FC<DetectionFusionPageProps> = ({
               {!spill
                 ? 'Sensor Fusion Status: Awaiting Active SAR Spill Detection'
                 : opticalResult?.optical_confirmed
-                ? `Sensor Fusion Agreement: High (${Math.round((opticalResult.slick_coverage_pct || 0.94) * 100)}% Cross-Sensor Correlation)`
+                ? `Multi-Mission Fusion Agreement: High (${Math.round((opticalResult.slick_coverage_pct || 0.94) * 100)}% Cross-Sensor Correlation)`
                 : opticalResult
                 ? 'Optical Confirmation Pass Inconclusive (Excess Cloud Cover / Sun Glint)'
-                : 'SAR Dark Spot Detected · Awaiting Optical S2 Fusion Pass'}
+                : 'SAR Dark Spot Detected · Awaiting Optical/Thermal Fusion Pass'}
             </div>
             <div style={{ fontSize: '0.70rem', color: 'var(--text-secondary)' }}>
               {!spill
-                ? 'Run a new SAR detection scan or select an active incident to query Sentinel-1 SAR and cross-reference with Sentinel-2 optical MSI passes.'
+                ? 'Run a new SAR detection scan or select an active incident to query Sentinel-1 SAR and cross-reference with Sentinel-2 / Landsat 8 / Landsat 9 passes.'
                 : opticalResult?.optical_confirmed
-                ? 'SAR backscatter reduction strongly corroborated by Sentinel-2 MSI prismatic sheen clusters inside the bounding polygon.'
+                ? `SAR backscatter reduction strongly corroborated by ${opticalResult.satellite_platform || 'Optical Pass'} multi-spectral reflectance and Bonn classification.`
                 : opticalResult
                 ? 'SAR dark spot detection verified; optical spectral validation deferred due to atmospheric scene conditions.'
-                : 'Click "Run S2 Optical Fusion" above to query Copernicus Sentinel-2 MSI RGB true-color imagery for this slick.'}
+                : 'Click "Run Fusion" above to query Sentinel-2 MSI, Landsat 8, or Landsat 9 optical and thermal imagery for this slick.'}
             </div>
           </div>
         </div>

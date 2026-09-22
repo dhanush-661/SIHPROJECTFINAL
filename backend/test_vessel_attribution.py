@@ -25,7 +25,8 @@ class TestAISVesselAttribution(unittest.TestCase):
         vessels_raw, criteria, total_corridor = ais_engine.query_vessels_in_corridor(
             origin_centroid=self.origin_centroid,
             origin_window=self.origin_window,
-            slick_orientation_deg=138.0
+            slick_orientation_deg=138.0,
+            strict_real_ais_only=False
         )
         self.assertGreaterEqual(len(vessels_raw), 4)
         self.assertGreaterEqual(total_corridor, len(vessels_raw))
@@ -50,8 +51,9 @@ class TestAISVesselAttribution(unittest.TestCase):
 
     def test_anomaly_scorer_and_ranking_contract(self):
         req = VesselCorrelationRequest(
-            origin_buffer_km=25.0,
-            time_window_padding_hours=12.0,
+            investigation_radius_km=15.0,
+            time_window_hours=48.0,
+            strict_real_ais_only=False,
             weight_proximity=0.35,
             weight_temporal=0.25,
             weight_trajectory=0.20,
@@ -67,8 +69,7 @@ class TestAISVesselAttribution(unittest.TestCase):
         )
 
         self.assertEqual(res.spill_id, "spill_test_mumbai_001")
-        self.assertIn(res.provenance, ["ANOMALY-FLAGGED", "MEASURED_HISTORICAL_AIS"])
-        self.assertIn("not constitute legal proof", res.disclaimer)
+        self.assertIn(res.evidence_status, ["VERIFIED_AIS_EVIDENCE", "MODELLED_ANALYSIS"])
         self.assertGreaterEqual(len(res.candidate_vessels), 4)
 
         # Check ranking order (descending by suspect_score)
@@ -78,16 +79,40 @@ class TestAISVesselAttribution(unittest.TestCase):
         top_suspect = res.candidate_vessels[0]
         self.assertGreaterEqual(top_suspect.suspect_score, 0.70)
         self.assertIsNotNone(top_suspect.mmsi)
+        self.assertIsNotNone(top_suspect.provenance_label)
+        self.assertIsNotNone(top_suspect.observation_count)
         self.assertIsNotNone(top_suspect.anomaly_score)
         self.assertIsNotNone(top_suspect.component_scores.ml_anomaly_score)
         self.assertIsNotNone(top_suspect.features.min_distance_to_origin_km)
         self.assertGreater(len(top_suspect.track), 5)
 
         print("\nValidated Phase 3 Vessel Attribution Sample:")
-        print(f"Top Suspect: {top_suspect.vessel_name} ({top_suspect.vessel_type}, Flag: {top_suspect.flag})")
+        print(f"Top Candidate: {top_suspect.vessel_name} ({top_suspect.vessel_type}, Flag: {top_suspect.flag})")
         print(f"Suspect Score: {top_suspect.suspect_score} (ML Anomaly: {top_suspect.anomaly_score})")
-        print(f"Components: {top_suspect.component_scores.model_dump()}")
-        print(f"Features: {top_suspect.features.model_dump()}")
+
+    def test_strict_mode_zero_evidence_honesty(self):
+        req = VesselCorrelationRequest(
+            investigation_radius_km=15.0,
+            time_window_hours=48.0,
+            strict_real_ais_only=True,
+            fetch_online_gfw=False
+        )
+
+        # Query in remote coordinates where no local DB pings exist
+        res = anomaly_scorer.evaluate_and_rank_vessels(
+            spill_id="spill_test_remote_zero",
+            origin_centroid=[-140.0, -50.0],
+            origin_window=self.origin_window,
+            slick_orientation_deg=90.0,
+            request=req
+        )
+
+        self.assertEqual(res.evidence_status, "NO_AIS_EVIDENCE")
+        self.assertEqual(res.records_found, 0)
+        self.assertEqual(len(res.candidate_vessels), 0)
+        self.assertTrue(res.is_strict_mode)
+        self.assertIn("No verified AIS observations", res.evidence_reason)
+
 
     def test_gfw_online_fetching_and_persistence(self):
         """

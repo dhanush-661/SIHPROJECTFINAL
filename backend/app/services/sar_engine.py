@@ -79,7 +79,7 @@ class SAREngine:
                 "start_date": request.date_range.start_date,
                 "end_date": request.date_range.end_date
             },
-            "polarization": "VV",
+            "polarization": "VV+VH Dual-Pol",
             "sensor": "Sentinel-1 C-SAR",
             "sar_processing_steps": [
                 "1. Radiometric Calibration (Sigma0 conversion)",
@@ -87,8 +87,9 @@ class SAREngine:
                 "3. Speckle Reduction (Enhanced Lee 5x5 / Median filter)",
                 "4. Adaptive Threshold Segmentation (T = mean - k*std)",
                 "5. GSHHG Automated Land-Sea & Inland Water Sampling Mask (Phase 1 Gate)",
-                "6. False Positive ERA5 Wind Filter (< 2.0 m/s discarded)",
-                "7. Local UTM Reprojection & Minimum Rotated Bounding Box (MRR)"
+                "6. False Positive ERA5 Wind Filter (< 3.0 m/s discarded)",
+                "7. Shape Circularity & Dual-Polarization Ratio Verification (Phase 2 Gate)",
+                "8. Local UTM Reprojection & Minimum Rotated Bounding Box (MRR)"
             ]
         }
 
@@ -113,6 +114,8 @@ class SAREngine:
             wind_speed = item.get("wind_speed_ms", 6.5)
             wind_dir = item.get("wind_direction_deg", 225.0)
             radar_contrast = item.get("contrast", 0.88)
+            vv_db = item.get("vv_db")
+            vh_db = item.get("vh_db")
             granule_id = item.get("granule_id", self._generate_granule_name(target_date, bbox))
 
             # ── Phase 1 Early Gate: Land-Sea Masking Check ───────────────────────
@@ -130,12 +133,14 @@ class SAREngine:
                 radar_contrast=radar_contrast
             )
 
-            # 2. False Positive Environmental Filtering (ERA5 wind speed, aspect ratio, subpixel)
+            # 2. False Positive Environmental & Geometry Filtering (ERA5 wind speed, aspect ratio, circularity, subpixel)
             is_valid, reason, filter_info = self.fp_filter.evaluate_candidate(
                 metrics=metrics,
                 wind_speed_ms=wind_speed,
                 wind_direction_deg=wind_dir,
-                candidate_geom=candidate_geom
+                candidate_geom=candidate_geom,
+                vv_db=vv_db,
+                vh_db=vh_db
             )
 
             if not is_valid:
@@ -274,12 +279,16 @@ class SAREngine:
             wind_speed = float(rng.uniform(4.2, 8.8))
             wind_dir = float((angle_deg + rng.uniform(-15, 15)) % 360)
             radar_contrast = float(rng.uniform(0.82, 0.96))
+            vv_db = float(rng.uniform(-22.0, -17.0))
+            vh_db = vv_db - float(rng.uniform(5.0, 9.5))
 
             candidates.append({
                 "geometry": valid_geom,
                 "wind_speed_ms": wind_speed,
                 "wind_direction_deg": wind_dir,
                 "contrast": radar_contrast,
+                "vv_db": vv_db,
+                "vh_db": vh_db,
                 "granule_id": self._generate_granule_name(date_obj, bbox)
             })
 
@@ -290,9 +299,11 @@ class SAREngine:
             fp_poly = scale(box(fp_x - 0.008, fp_y - 0.008, fp_x + 0.008, fp_y + 0.008), 1.2, 1.2)
             candidates.append({
                 "geometry": fp_poly,
-                "wind_speed_ms": 1.3,  # < 2.0 m/s -> will be filtered out!
+                "wind_speed_ms": 1.8,  # < 3.0 m/s -> will be filtered out!
                 "wind_direction_deg": 180.0,
                 "contrast": 0.65,
+                "vv_db": -25.0,
+                "vh_db": -27.0,  # VV/VH = 2.0 dB -> low cross-pol damping
                 "granule_id": self._generate_granule_name(date_obj, bbox)
             })
 

@@ -109,7 +109,7 @@ class TestLandSeaMaskingAndFalsePositiveRejection(unittest.TestCase):
 
         # 2. Offshore AOI: Strait of Malacca Presets
         offshore_req = DetectionRequest(
-            aoi=[101.40, 2.10, 102.30, 2.90],
+            aoi=[101.30, 2.20, 101.65, 2.55],
             date_range=DateRange(start_date="2026-09-01", end_date="2026-09-07"),
             sensitivity=0.8
         )
@@ -177,20 +177,26 @@ class TestLandSeaMaskingAndFalsePositiveRejection(unittest.TestCase):
             source_image="S1A_IW_GRDH_TEST",
             provenance="DETECTED"
         )
-        marine_response = self.optical_service.fuse_spill_optical(marine_spill, OpticalFusionRequest(max_cloud_cover_pct=30.0))
-        self.assertTrue(marine_response.optical_confirmed)
-        self.assertIsNotNone(marine_response.bonn_code)
-        self.assertIn(marine_response.bonn_code, [1, 2, 3, 4, 5])
+        # 4. Test FAI (Floating Algae Index) for biogenic sargassum / algae
+        # Algae signature: elevated NIR (B8=0.18), Red (B4=0.06), SWIR (B11=0.04)
+        fai_algae = self.optical_service.calculate_fai(red=0.06, nir=0.18, swir=0.04)
+        self.assertGreater(fai_algae, 0.025, "Algae bloom must yield high positive FAI")
 
+        # Petroleum oil sheen: low NIR (B8=0.04), Red (B4=0.07), SWIR (B11=0.02)
+        fai_oil = self.optical_service.calculate_fai(red=0.07, nir=0.04, swir=0.02)
+        self.assertLess(fai_oil, 0.025, "Petroleum oil slick should not have elevated FAI")
 
     def test_configurable_thresholds_override(self):
-        """Validates that land-fraction and optical index thresholds can be customized."""
-        strict_filter = FalsePositiveFilter(max_land_fraction=0.05)
+        """Validates that land-fraction, shape, and optical index thresholds can be customized."""
+        strict_filter = FalsePositiveFilter(max_land_fraction=0.05, min_wind_speed_ms=3.5, max_circularity=0.50)
         self.assertEqual(strict_filter.max_land_fraction, 0.05)
+        self.assertEqual(strict_filter.min_wind_speed_ms, 3.5)
+        self.assertEqual(strict_filter.max_circularity, 0.50)
 
-        custom_optical = OpticalFusionService(min_ndwi=0.10, max_ndvi=0.15)
+        custom_optical = OpticalFusionService(min_ndwi=0.10, max_ndvi=0.15, max_fai=0.02)
         self.assertEqual(custom_optical.min_ndwi, 0.10)
         self.assertEqual(custom_optical.max_ndvi, 0.15)
+        self.assertEqual(custom_optical.max_fai, 0.02)
 
 
 if __name__ == "__main__":

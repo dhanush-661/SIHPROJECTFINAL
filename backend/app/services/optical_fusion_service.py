@@ -93,6 +93,7 @@ BONN_AGREEMENT_CODES: Dict[int, BonnClassificationDetails] = {
 # Configurable optical spectral index thresholds
 DEFAULT_OPTICAL_NDWI_MIN = float(os.getenv("OPTICAL_NDWI_MIN_THRESHOLD", "0.0"))
 DEFAULT_OPTICAL_NDVI_MAX = float(os.getenv("OPTICAL_NDVI_MAX_THRESHOLD", "0.20"))
+DEFAULT_OPTICAL_FAI_MAX = float(os.getenv("OPTICAL_FAI_MAX_THRESHOLD", "0.025"))
 
 
 class OpticalFusionService:
@@ -102,6 +103,8 @@ class OpticalFusionService:
     - Queries GEE Sentinel-2 SR, Landsat 8 L2, or Landsat 9 L2 within +/-48h of detection with <20% cloud cover.
     - Computes NDWI (Green/NIR) and NDVI (Red/NIR) to detect and reject terrestrial features
       (mudflats, dry land, vegetation) as FALSE_POSITIVE_TERRESTRIAL.
+    - Computes Floating Algae Index (FAI = NIR - [Red + (SWIR - Red)*((lambda_NIR - lambda_Red)/(lambda_SWIR - lambda_Red))])
+      to detect and reject biogenic slicks (sargassum, macro-algae, phytoplankton blooms) as FALSE_POSITIVE_BIOGENIC_ALGAE.
     - If clean marine scene exists: buffers SAR polygon, extracts multi-band reflectance (Blue, Green, Red, NIR),
       performs KMeans hue/color clustering, and classifies against Bonn Agreement Oil Appearance Code (Codes 1-5).
     - For Landsat 8 & 9: extracts TIRS Band 10 Thermal Infrared Radiometry to quantify surface temperature
@@ -111,11 +114,13 @@ class OpticalFusionService:
     def __init__(
         self,
         min_ndwi: Optional[float] = None,
-        max_ndvi: Optional[float] = None
+        max_ndvi: Optional[float] = None,
+        max_fai: Optional[float] = None
     ):
         self.ee_initialized = gee_auth_service.initialized
         self.min_ndwi = min_ndwi if min_ndwi is not None else DEFAULT_OPTICAL_NDWI_MIN
         self.max_ndvi = max_ndvi if max_ndvi is not None else DEFAULT_OPTICAL_NDVI_MAX
+        self.max_fai = max_fai if max_fai is not None else DEFAULT_OPTICAL_FAI_MAX
 
     def calculate_spectral_indices(
         self,
@@ -143,6 +148,25 @@ class OpticalFusionService:
         ndvi = (n - r) / (ndvi_denom + 1e-7) if abs(ndvi_denom) > 1e-7 else 0.0
 
         return float(ndwi), float(ndvi)
+
+    def calculate_fai(
+        self,
+        red: float,
+        nir: float,
+        swir: float,
+        lambda_red: float = 665.0,
+        lambda_nir: float = 842.0,
+        lambda_swir: float = 1610.0
+    ) -> float:
+        """
+        Calculates Hu (2009) Floating Algae Index (FAI) for Sentinel-2 / Landsat-8/9.
+        FAI = R_nir - (R_red + (R_swir - R_red) * ((lambda_nir - lambda_red) / (lambda_swir - lambda_red)))
+        Positive FAI (> 0.025) on marine water indicates floating sargassum or algae blooms.
+        """
+        fraction = (lambda_nir - lambda_red) / (lambda_swir - lambda_red + 1e-7)
+        r_prime = red + (swir - red) * fraction
+        fai = nir - r_prime
+        return float(fai)
 
     def fuse_spill_optical(
         self,
@@ -605,23 +629,30 @@ class OpticalFusionService:
             base_b3 = float(rng.uniform(0.06, 0.10))
             base_b4 = float(rng.uniform(0.12, 0.22))
             base_nir = float(rng.uniform(0.28, 0.45))
+            base_swir = float(rng.uniform(0.15, 0.30))
         else:
             base_b2 = float(rng.uniform(0.09, 0.16))
             base_b3 = float(rng.uniform(0.08, 0.14))
             base_b4 = float(rng.uniform(0.06, 0.11))
             base_nir = float(rng.uniform(0.03, 0.06))
+            base_swir = float(rng.uniform(0.015, 0.035))
 
         nir_key = "B5_nir" if (is_landsat_8 or is_landsat_9) else "B8_nir"
+        swir_key = "B6_swir" if (is_landsat_8 or is_landsat_9) else "B11_swir"
         mean_reflectance = {
             "B2_blue": round(base_b2, 4),
             "B3_green": round(base_b3, 4),
             "B4_red": round(base_b4, 4),
             nir_key: round(base_nir, 4),
-            "B8_nir": round(base_nir, 4) # Compatibility key
+            "B8_nir": round(base_nir, 4), # Compatibility key
+            swir_key: round(base_swir, 4)
         }
 
         # Spectral index cross-check
         ndwi, ndvi = self.calculate_spectral_indices(base_b3, base_b4, base_nir)
+        fai = self.calculate_fai(base_b4, base_nir, base_swir)
+
+        # 1. Check for terrestrial / landmass false positives
         if ndwi < self.min_ndwi or ndvi > self.max_ndvi:
             rejection_reason = (
                 f"FALSE_POSITIVE_TERRESTRIAL: {platform_name} optical index cross-check failed (NDWI={ndwi:.3f} < {self.min_ndwi:.2f} "
@@ -633,6 +664,33 @@ class OpticalFusionService:
                 analyzed_at=now_iso,
                 optical_confirmed=False,
                 rejection_code="FALSE_POSITIVE_TERRESTRIAL",
+                reason=rejection_reason,
+                satellite_platform=platform_name,
+                sensor_name=sensor_name,
+                scene_id=tile_id,
+                sentinel2_scene_id=tile_id,
+                resolution_meters=resolution,
+                scene_cloud_cover_pct=round(simulated_cloud_cover, 2),
+                scene_acquisition_time=scene_time.isoformat(),
+                time_difference_hours=round(abs(time_offset_hours), 2),
+                mean_reflectance=mean_reflectance,
+                ndwi=round(ndwi, 4),
+                ndvi=round(ndvi, 4),
+                provenance="MEASURED"
+            )
+
+        # 2. Check for biogenic look-alikes (Sargassum / Phytoplankton / Algal Blooms)
+        if fai > self.max_fai:
+            rejection_reason = (
+                f"FALSE_POSITIVE_BIOGENIC_ALGAE: Elevated Floating Algae Index (FAI={fai:.4f} > {self.max_fai:.3f}) "
+                f"detected in {platform_name} spectral reflectance. Signature corresponds to biogenic macro-algae "
+                f"(e.g. Sargassum fluitans/natans, green algal bloom) rather than mineral petroleum hydrocarbon."
+            )
+            return OpticalConfirmationResponse(
+                spill_id=spill.spill_id,
+                analyzed_at=now_iso,
+                optical_confirmed=False,
+                rejection_code="FALSE_POSITIVE_BIOGENIC_ALGAE",
                 reason=rejection_reason,
                 satellite_platform=platform_name,
                 sensor_name=sensor_name,

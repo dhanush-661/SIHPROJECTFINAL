@@ -17,8 +17,8 @@ except ImportError:
     logger.warning("global-land-mask library not available. Offline land masking disabled.")
 
 # Configurable defaults via environment variables
-DEFAULT_MAX_LAND_FRACTION = float(os.getenv("LAND_MASK_MAX_FRACTION", "0.30"))
-DEFAULT_MIN_WIND_SPEED_MS = float(os.getenv("MIN_WIND_SPEED_MS", "2.0"))
+DEFAULT_MAX_LAND_FRACTION = float(os.getenv("LAND_MASK_MAX_FRACTION", "0.20"))
+DEFAULT_MIN_WIND_SPEED_MS = float(os.getenv("MIN_WIND_SPEED_MS", "3.0"))
 DEFAULT_MAX_WIND_SPEED_MS = float(os.getenv("MAX_WIND_SPEED_MS", "14.0"))
 
 # Fast detection for Shapely C-vectorized contains_xy
@@ -28,16 +28,18 @@ HAS_CONTAINS_XY = hasattr(shapely, "contains_xy")
 class FalsePositiveFilter:
     """
     Evaluates candidate dark spot detections against environmental conditions (e.g. ERA5 wind speed),
-    land-sea masks (GSHHG global coastline), and physical geometry to eliminate false positives
-    (natural calm water, inland lakes/reservoirs, radar shadows behind terrain, dry mudflats, etc.).
+    land-sea masks (GSHHG global coastline), dual-polarization damping, and physical geometry
+    to eliminate false positives (natural calm water, inland lakes/reservoirs, radar shadows behind
+    terrain, rain downbursts, dry mudflats, and isotropic calm pockets).
     """
 
     def __init__(
         self,
         min_wind_speed_ms: Optional[float] = None,
         max_wind_speed_ms: Optional[float] = None,
-        min_area_km2: float = 0.05,
-        min_aspect_ratio: float = 1.2,
+        min_area_km2: float = 0.08,
+        min_aspect_ratio: float = 1.8,
+        max_circularity: float = 0.60,
         max_land_fraction: Optional[float] = None,
         enforce_ocean_mask: bool = True
     ):
@@ -49,6 +51,7 @@ class FalsePositiveFilter:
         )
         self.min_area_km2 = min_area_km2
         self.min_aspect_ratio = min_aspect_ratio
+        self.max_circularity = max_circularity
         self.max_land_fraction = (
             max_land_fraction if max_land_fraction is not None else DEFAULT_MAX_LAND_FRACTION
         )
@@ -160,12 +163,32 @@ class FalsePositiveFilter:
 
         return is_land_rejected, land_fraction, total_samples, reason
 
+    def check_polarization_damping(
+        self,
+        vv_db: float,
+        vh_db: float
+    ) -> Tuple[bool, str]:
+        """
+        Evaluates dual-polarization Sentinel-1 backscatter (VV and VH channels).
+        Mineral oil suppresses capillary waves moderately in both VV and VH, exhibiting
+        a cross-polarization ratio (VV/VH in dB = VV_dB - VH_dB) typically between 3.5 dB and 13.0 dB.
+        Extreme polarization ratios indicate rain squalls (volumetric backscatter) or clean water noise.
+        """
+        pol_ratio_db = vv_db - vh_db
+        if pol_ratio_db < 3.0:
+            return False, f"FALSE_POSITIVE_POLARIZATION: High cross-pol scattering (VV/VH={pol_ratio_db:.1f} dB < 3.0 dB) indicative of rain downburst or atmospheric volume scattering."
+        if pol_ratio_db > 14.0:
+            return False, f"FALSE_POSITIVE_POLARIZATION: Extreme co-to-cross polarization ratio (VV/VH={pol_ratio_db:.1f} dB > 14.0 dB) indicative of calm sea noise floor or instrument artifact."
+        return True, f"Passed dual-polarization ratio check (VV/VH={pol_ratio_db:.1f} dB)."
+
     def evaluate_candidate(
         self,
         metrics: Dict[str, Any],
         wind_speed_ms: float,
         wind_direction_deg: Optional[float] = None,
-        candidate_geom: Optional[Union[Polygon, MultiPolygon, Dict[str, Any]]] = None
+        candidate_geom: Optional[Union[Polygon, MultiPolygon, Dict[str, Any]]] = None,
+        vv_db: Optional[float] = None,
+        vh_db: Optional[float] = None
     ) -> Tuple[bool, str, Dict[str, Any]]:
         """
         Evaluates a candidate dark spot against false positive rules.
@@ -179,7 +202,9 @@ class FalsePositiveFilter:
             "wind_valid": True,
             "size_valid": True,
             "aspect_valid": True,
+            "shape_valid": True,
             "land_valid": True,
+            "polarization_valid": True,
             "rejection_codes": [],
             "rejection_reasons": []
         }
@@ -205,7 +230,7 @@ class FalsePositiveFilter:
                             f"FALSE_POSITIVE_LAND: Centroid ({c_lat:.4f}°N, {c_lon:.4f}°E) lies on landmass or inland water body (GSHHG coastline mask)"
                         )
 
-        # 2. ERA5 Wind speed lower threshold (< 2.0 m/s = discard)
+        # 2. ERA5 Wind speed lower threshold (< 3.0 m/s = discard specular calm water look-alikes)
         if wind_speed_ms < self.min_wind_speed_ms:
             filter_details["wind_valid"] = False
             filter_details["rejection_codes"].append("FALSE_POSITIVE_LOW_WIND")
@@ -230,14 +255,35 @@ class FalsePositiveFilter:
                 f"Sub-pixel noise: area {area:.4f} km2 is smaller than minimum detectable resolution of {self.min_area_km2} km2"
             )
 
-        # 5. Aspect ratio threshold
+        # 5. Aspect ratio threshold (Elongation test)
         aspect_ratio = metrics.get("aspect_ratio", 1.0)
-        if aspect_ratio < self.min_aspect_ratio and area < 0.5:
+        if aspect_ratio < self.min_aspect_ratio and area < 1.0:
             filter_details["aspect_valid"] = False
             filter_details["rejection_codes"].append("FALSE_POSITIVE_ISOTROPIC")
             filter_details["rejection_reasons"].append(
-                f"Isotropic shape: aspect ratio {aspect_ratio:.2f} indicates low-likelihood circular feature"
+                f"Isotropic shape: aspect ratio {aspect_ratio:.2f} (expected >= {self.min_aspect_ratio:.1f}) indicates low-likelihood circular calm-water pocket"
             )
+
+        # 6. Circularity / Isoperimetric Quotient test (Q = 4 * pi * Area / Perimeter^2)
+        perimeter = metrics.get("perimeter_km", 0.0)
+        if perimeter > 0.0 and area > 0.0:
+            circularity = (4.0 * np.pi * area) / (perimeter ** 2)
+            filter_details["circularity"] = circularity
+            if circularity > self.max_circularity and area < 1.0:
+                filter_details["shape_valid"] = False
+                if "FALSE_POSITIVE_ISOTROPIC" not in filter_details["rejection_codes"]:
+                    filter_details["rejection_codes"].append("FALSE_POSITIVE_ISOTROPIC")
+                    filter_details["rejection_reasons"].append(
+                        f"High circularity ({circularity:.2f} > {self.max_circularity:.2f}): feature resembles circular natural calm-water pool rather than elongated marine slick"
+                    )
+
+        # 7. Dual-Polarization Ratio Check (if VV/VH provided)
+        if vv_db is not None and vh_db is not None:
+            pol_valid, pol_reason = self.check_polarization_damping(vv_db, vh_db)
+            if not pol_valid:
+                filter_details["polarization_valid"] = False
+                filter_details["rejection_codes"].append("FALSE_POSITIVE_POLARIZATION")
+                filter_details["rejection_reasons"].append(pol_reason)
 
         is_valid = len(filter_details["rejection_reasons"]) == 0
         reason = "Passed all false-positive environmental filters." if is_valid else "; ".join(filter_details["rejection_reasons"])

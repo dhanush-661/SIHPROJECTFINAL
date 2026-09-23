@@ -52,17 +52,34 @@ class TestOilSpillDetectionPipeline(unittest.TestCase):
         self.assertAlmostEqual(metrics["width_km"], 0.2, delta=0.1)
 
     def test_false_positive_filter_low_wind(self):
-        fp_filter = FalsePositiveFilter(min_wind_speed_ms=2.0)
+        fp_filter = FalsePositiveFilter(min_wind_speed_ms=3.0)
         
-        # Test candidate with wind speed 1.2 m/s (< 2.0 m/s) -> MUST DISCARD
-        metrics = {"area_km2": 2.5, "aspect_ratio": 4.0}
-        is_valid, reason, _ = fp_filter.evaluate_candidate(metrics, wind_speed_ms=1.2)
-        self.assertFalse(is_valid, "Candidate with wind speed < 2.0 m/s must be discarded as false positive")
+        # Test candidate with wind speed 2.2 m/s (< 3.0 m/s) -> MUST DISCARD
+        metrics = {"area_km2": 2.5, "aspect_ratio": 4.0, "perimeter_km": 10.0}
+        is_valid, reason, _ = fp_filter.evaluate_candidate(metrics, wind_speed_ms=2.2)
+        self.assertFalse(is_valid, "Candidate with wind speed < 3.0 m/s must be discarded as false positive")
         self.assertIn("Calm water look-alike", reason)
 
         # Test candidate with wind speed 6.5 m/s -> MUST PASS
         is_valid_pass, _, _ = fp_filter.evaluate_candidate(metrics, wind_speed_ms=6.5)
         self.assertTrue(is_valid_pass)
+
+    def test_false_positive_filter_circularity_and_polarization(self):
+        fp_filter = FalsePositiveFilter()
+        
+        # Test candidate with high circularity (Q = 4*pi*0.5 / (2.6)^2 = 0.93 > 0.60) -> MUST DISCARD
+        circular_metrics = {"area_km2": 0.5, "perimeter_km": 2.6, "aspect_ratio": 1.1}
+        is_valid_circ, reason_circ, details_circ = fp_filter.evaluate_candidate(circular_metrics, wind_speed_ms=5.0)
+        self.assertFalse(is_valid_circ)
+        self.assertIn("FALSE_POSITIVE_ISOTROPIC", details_circ["rejection_codes"])
+
+        # Test candidate with anomalous polarization ratio (VV=-15, VH=-13.5 -> VV/VH=1.5 dB < 3.0 dB) -> MUST DISCARD
+        elongated_metrics = {"area_km2": 1.5, "perimeter_km": 8.0, "aspect_ratio": 4.2}
+        is_valid_pol, reason_pol, details_pol = fp_filter.evaluate_candidate(
+            elongated_metrics, wind_speed_ms=5.5, vv_db=-15.0, vh_db=-13.5
+        )
+        self.assertFalse(is_valid_pol)
+        self.assertIn("FALSE_POSITIVE_POLARIZATION", details_pol["rejection_codes"])
 
     def test_sar_detection_contract(self):
         engine = SAREngine()
